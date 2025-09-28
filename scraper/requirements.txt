@@ -1,0 +1,9 @@
+
+## c) `scraper/requirements.txt`
+
+```txt
+requests==2.31.0
+pandas==2.2
+lxml==4.9.3
+beautifulsoup4==4.12.2
+sqlite-utils==3.36
