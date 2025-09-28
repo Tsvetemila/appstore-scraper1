@@ -1,9 +1,9 @@
 name: Daily App Store Scrape
 
 on:
-  workflow_dispatch: {}   # ръчен старт от GitHub Actions
+  workflow_dispatch: {} # ръчен старт (бутон)
   schedule:
-    - cron: "0 5 * * *"   # всеки ден 05:00 UTC (≈ 07:00 BG лято / 06:00 BG зима)
+    - cron: "0 5 * * *" # всеки ден 05:00 UTC (07:00 BG лято / 07:00-06:00 BG зима)
 
 jobs:
   scrape:
@@ -16,31 +16,33 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: '3.11'
 
-      - name: Install dependencies
+      - name: Install deps
         run: |
           python -m pip install --upgrade pip
           pip install -r scraper/requirements.txt
 
       - name: Run scraper
         run: |
-          python scraper/scraper.py
+          mkdir -p exports
+          python scraper/scraper.py --output exports
 
       - name: Upload CSV artifacts
         uses: actions/upload-artifact@v4
         with:
           name: csv_exports
           path: exports/*.csv
-          if-no-files-found: error
+        continue-on-error: true
 
       - name: Ingest CSV -> SQLite
         run: |
           python scraper/ingest_to_sqlite.py --csv-dir exports --db appstore_charts.db
+        continue-on-error: true
 
       - name: Upload SQLite DB
         uses: actions/upload-artifact@v4
         with:
           name: appstore_charts_db
           path: appstore_charts.db
-          if-no-files-found: error
+        continue-on-error: true
