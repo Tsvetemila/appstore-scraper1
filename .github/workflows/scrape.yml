@@ -35,12 +35,10 @@ jobs:
           if-no-files-found: error
 
       - name: Ingest CSV -> SQLite
-        run: |
-          python scraper/ingest_to_sqlite.py --csv-dir out --db appstore_charts.db
+        run: python scraper/ingest_to_sqlite.py
 
       - name: Upload SQLite DB
         uses: actions/upload-artifact@v4
         with:
           name: appstore_charts_db
           path: appstore_charts.db
-          if-no-files-found: error
