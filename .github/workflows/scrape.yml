@@ -32,4 +32,18 @@ jobs:
         with:
           name: csv-exports
           path: exports/*.csv
-          if-no-files-found: warn
+          if-no-files-found: warn     
+
+      - name: Ingest CSV -> SQLite
+        run: |
+         python scraper/ingest_to_sqlite.py --csv-dir out --db       appstore_charts.db
+
+      - name: Upload SQLite DB
+       uses: actions/upload-artifact@v4
+       with:
+        name: appstore_charts_db
+        path: appstore_charts.db
+        if-no-files-found: error
+
+
+
