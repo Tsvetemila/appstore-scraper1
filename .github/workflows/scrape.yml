@@ -1,9 +1,9 @@
 name: Daily App Store Scrape
 
 on:
-  workflow_dispatch: {}        # ръчен старт (бутон)
+  workflow_dispatch: {}   # ръчен старт (бутон)
   schedule:
-    - cron: "0 5 * * *"        # всеки ден 05:00 UTC (07:00 BG лято / 07:00→06:00 BG зима)
+    - cron: "0 5 * * *"   # всеки ден 05:00 UTC (07:00 BG лято / 07:00-06:00 BG зима)
 
 jobs:
   scrape:
@@ -25,25 +25,22 @@ jobs:
 
       - name: Run scraper
         run: |
-          python scraper/scraper.py
+          python scraper/scraper.py --out out
 
       - name: Upload CSV artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: csv-exports
-          path: exports/*.csv
-          if-no-files-found: warn     
+          name: csv_exports
+          path: out/*.csv
+          if-no-files-found: error
 
       - name: Ingest CSV -> SQLite
         run: |
-         python scraper/ingest_to_sqlite.py --csv-dir out --db       appstore_charts.db
+          python scraper/ingest_to_sqlite.py --csv-dir out --db appstore_charts.db
 
       - name: Upload SQLite DB
-       uses: actions/upload-artifact@v4
-       with:
-        name: appstore_charts_db
-        path: appstore_charts.db
-        if-no-files-found: error
-
-
-
+        uses: actions/upload-artifact@v4
+        with:
+          name: appstore_charts_db
+          path: appstore_charts.db
+          if-no-files-found: error
