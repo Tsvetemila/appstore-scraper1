@@ -1,10 +1,9 @@
-name: Daily App Store Scraper
+name: Daily App Store Scrape
 
 on:
+  workflow_dispatch: {}        # ръчен старт (бутон)
   schedule:
-    # Всеки ден в 04:00 UTC (≈ 07:00 лятото / 06:00 зимата в България)
-    - cron: '0 4 * * *'
-  workflow_dispatch: {}  # позволява ръчно стартиране от GitHub Actions
+    - cron: "0 5 * * *"        # всеки ден 05:00 UTC (07:00 BG лято / 07:00→06:00 BG зима)
 
 jobs:
   scrape:
@@ -17,21 +16,20 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: "3.11"
 
-      - name: Install dependencies
+      - name: Install deps
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          pip install -r scraper/requirements.txt
 
       - name: Run scraper
         run: |
-          python scraper.py
+          python scraper/scraper.py
 
-      - name: Commit & push results (db + csv)
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -A
-          git commit -m "Auto: data update $(date -u +'%Y-%m-%dT%H:%MZ')" || echo "No changes to commit"
-          git push
+      - name: Upload CSV artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: csv-exports
+          path: exports/*.csv
+          if-no-files-found: warn
