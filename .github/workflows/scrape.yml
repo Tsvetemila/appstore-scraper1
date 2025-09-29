@@ -46,3 +46,20 @@ jobs:
           name: appstore_charts_db
           path: appstore_charts.db
         continue-on-error: true
+
+ # --- EMAIL NOTIFICATION ---
+      - name: Send email notification
+        if: always()   # изпълнява се дори при грешка
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp.gmail.com
+          server_port: 465
+          username: ${{ secrets.EMAIL_USER }}
+          password: ${{ secrets.EMAIL_PASS }}
+          subject: "GitHub Action: Scraper Run ${{ job.status }}"
+          to: ${{ secrets.EMAIL_TO }}
+          from: GitHub Actions <${{ secrets.EMAIL_USER }}>
+          body: |
+            The scraper workflow has finished with status: ${{ job.status }}.
+            Check logs here: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
