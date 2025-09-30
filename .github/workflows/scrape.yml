@@ -3,7 +3,7 @@ name: Daily App Store Scrape
 on:
   workflow_dispatch: {} # ръчен старт (бутон)
   schedule:
-    - cron: "0 5 * * *" # всеки ден 05:00 UTC (07:00 BG лято / 07:00-06:00 BG зима)
+    - cron: "0 4:30 * * *" # всеки ден 04:30 UTC (07:00 BG лято / 07:00-06:00 BG зима)
 
 jobs:
   scrape:
