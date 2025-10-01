@@ -2,8 +2,7 @@ name: Daily App Store Scrape
 
 on:
   schedule:
-    # всеки ден в 05:00 UTC → това е 08:00 в България
-    - cron: "0 5 * * *"
+    - cron: "0 5 * * *"   # 05:00 UTC = 08:00 BG time
   workflow_dispatch:
 
 jobs:
@@ -12,6 +11,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set up Python
         uses: actions/setup-python@v4
@@ -29,33 +30,15 @@ jobs:
       - name: Verify files exist
         run: ls -lh scraper/ || true
 
-      - name: Upload database
-        uses: actions/upload-artifact@v4
-        with:
-          name: app_data_db
-          path: scraper/app_data.db
+      - name: Move database to FastAPI folder
+        run: |
+          mkdir -p appstore-api/data
+          cp scraper/app_data.db appstore-api/data/app_data.db
 
-      - name: Upload CSV
-        uses: actions/upload-artifact@v4
-        with:
-          name: charts_export_csv
-          path: scraper/charts_export.csv
-
-  download:
-    runs-on: ubuntu-latest
-    needs: scrape
-    steps:
-      - name: Download database artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: app_data_db
-          path: ./downloads
-
-      - name: Download CSV artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: charts_export_csv
-          path: ./downloads
-
-      - name: Show downloaded files
-        run: ls -lh ./downloads
+      - name: Commit and push updated database
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git add appstore-api/data/app_data.db
+          git commit -m "Update database after daily scrape [skip ci]" || echo "No changes to commit"
+          git push origin main
