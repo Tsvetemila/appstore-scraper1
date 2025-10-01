@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write   # ✅ нужно за git push
+  contents: write
 
 jobs:
   scrape:
@@ -31,12 +31,7 @@ jobs:
         run: python scraper/scraper.py
 
       - name: Verify files exist
-        run: ls -lh scraper/ || true
-
-      - name: Move database to FastAPI folder
-        run: |
-          mkdir -p appstore-api/data
-          cp scraper/app_data.db appstore-api/data/app_data.db
+        run: ls -lh appstore-api/data/ || true
 
       - name: Commit and push updated database
         run: |
