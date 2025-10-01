@@ -25,7 +25,7 @@ jobs:
 
       - name: Run scraper
         run: |
-          python scraper.py
+          python scraper/scraper.py
 
       - name: Upload database
         uses: actions/upload-artifact@v4
