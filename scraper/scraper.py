@@ -9,18 +9,17 @@ import requests
 
 # ---------- КОНФИГ ----------
 
-# Път към базата (оставяме същия като в main.py)
-DB_PATH = os.path.join(os.path.dirname(__file__), "app_data.db")
+# Път към базата (същото както в main.py → appstore-api/data/app_data.db)
+DB_PATH = os.path.join(os.path.dirname(__file__), "..", "appstore-api", "data", "app_data.db")
 
-# Кои контексти да дърпаме (можеш да добавяш още редове)
-# Заб.: category/subcategory тук ги задаваме като "етикети" за нашата логика/филтри.
-CONTEXTS = [
-    {"country": "BG", "chart_type": "top_free", "category": "Games", "subcategory": "Arcade", "limit": 50},
-    # пример още един контекст:
-    # {"country": "BG", "chart_type": "top_paid", "category": "Games", "subcategory": "Arcade", "limit": 50},
-]
+# Държави за scrape (ISO кодове от App Store)
+COUNTRIES = ["US", "GB", "FR", "DE", "ES", "RU"]
 
-# Колко пъти да опитваме при временни мрежови грешки
+# Работим само с Top Free (по брифа)
+CHART_TYPE = "top_free"
+LIMIT = 50
+
+# Retry настройки
 HTTP_RETRIES = 3
 HTTP_TIMEOUT = 20  # сек
 
@@ -41,7 +40,7 @@ def http_get_json(url: str) -> Optional[dict]:
     return None
 
 def ensure_schema():
-    """Създава таблицата/индексите, ако ги няма (съвместимо с предишния init_db.py)."""
+    """Създава таблицата charts, ако я няма."""
     schema = """
     PRAGMA journal_mode=WAL;
     CREATE TABLE IF NOT EXISTS charts (
@@ -49,7 +48,7 @@ def ensure_schema():
         snapshot_date   TEXT    NOT NULL,
         country         TEXT    NOT NULL,
         chart_type      TEXT    NOT NULL,
-        category        TEXT    NOT NULL,
+        category        TEXT,
         subcategory     TEXT,
         rank            INTEGER NOT NULL,
         app_id          TEXT    NOT NULL,
@@ -77,7 +76,7 @@ def ensure_schema():
     con.close()
 
 def insert_rows(rows: List[Dict]):
-    """INSERT OR REPLACE към charts. rows: list от речници със същите ключове."""
+    """INSERT OR REPLACE към charts."""
     if not rows:
         return
     con = sqlite3.connect(DB_PATH)
@@ -98,12 +97,7 @@ def insert_rows(rows: List[Dict]):
 # ---------- Източници на данни ----------
 
 def fetch_top_from_rss(country: str, chart_type: str, limit: int) -> List[Dict]:
-    """
-    Дърпа топ N от официалния RSS/JSON фийд на Apple Marketing Tools.
-    chart_type приема: 'top_free' | 'top_paid' | 'top_grossing'
-    Връща минимален набор: id, name, artistName (developer).
-    """
-    # Превеждаме chart_type -> формата в RSS
+    """Дърпа топ N от официалния RSS/JSON фийд на Apple Marketing Tools."""
     rss_type = chart_type.replace("_", "-")  # top_free -> top-free
     url = f"https://rss.applemarketingtools.com/api/v2/{country.lower()}/apps/{rss_type}/{limit}/apps.json"
     data = http_get_json(url) or {}
@@ -114,7 +108,6 @@ def fetch_top_from_rss(country: str, chart_type: str, limit: int) -> List[Dict]:
             "app_id": str(item.get("id") or ""),
             "app_name": item.get("name") or "",
             "developer_name": item.get("artistName") or "",
-            # placeholders – ще ги обогатим от lookup
             "bundle_id": None,
             "price": None,
             "currency": None,
@@ -125,19 +118,15 @@ def fetch_top_from_rss(country: str, chart_type: str, limit: int) -> List[Dict]:
     return results
 
 def enrich_with_lookup(country: str, app_ids: List[str], batch_size: int = 50) -> Dict[str, Dict]:
-    """
-    Допълва информация за приложенията през iTunes Lookup API.
-    Връща dict: app_id -> {bundleId, price, currency, averageUserRating, userRatingCount}
-    """
+    """Допълва информация за приложенията през iTunes Lookup API."""
     out = {}
-    # API позволява до ~200 id наведнъж; използваме batch_size=50 за всеки случай.
     for i in range(0, len(app_ids), batch_size):
         chunk = app_ids[i:i+batch_size]
         ids_param = ",".join(chunk)
         url = f"https://itunes.apple.com/lookup?id={ids_param}&country={country}"
         data = http_get_json(url) or {}
         for r in (data.get("results") or []):
-            app_id = str(r.get("trackId") or r.get("artistId") or "")
+            app_id = str(r.get("trackId") or "")
             if not app_id:
                 continue
             out[app_id] = {
@@ -146,6 +135,8 @@ def enrich_with_lookup(country: str, app_ids: List[str], batch_size: int = 50) -
                 "currency": r.get("currency"),
                 "rating": r.get("averageUserRating"),
                 "ratings_count": r.get("userRatingCount"),
+                "primaryGenreName": r.get("primaryGenreName"),
+                "genres": r.get("genres"),
             }
     return out
 
@@ -159,30 +150,28 @@ def run_once():
 
     all_rows: List[Dict] = []
 
-    for ctx in CONTEXTS:
-        country = ctx["country"]
-        chart_type = ctx["chart_type"]
-        category = ctx["category"]
-        subcategory = ctx.get("subcategory")
-        limit = int(ctx.get("limit", 50))
+    for country in COUNTRIES:
+        print(f"[INFO] Fetch {country} {CHART_TYPE} (top {LIMIT})")
 
-        print(f"[INFO] Fetch {country} {chart_type} {category}/{subcategory} (top {limit})")
-
-        base_rows = fetch_top_from_rss(country, chart_type, limit=limit)
+        base_rows = fetch_top_from_rss(country, CHART_TYPE, limit=LIMIT)
         if not base_rows:
-            print(f"[WARN] Empty feed for {country} {chart_type}")
+            print(f"[WARN] Empty feed for {country}")
             continue
 
-        # обогатяване с lookup
         lookup_map = enrich_with_lookup(country, [r["app_id"] for r in base_rows])
 
         for r in base_rows:
             info = lookup_map.get(r["app_id"], {})
+            genre = info.get("primaryGenreName")
+            subcategory = None
+            if genre == "Games" and info.get("genres") and len(info["genres"]) > 1:
+                subcategory = info["genres"][1]
+
             row = {
                 "snapshot_date": today,
                 "country": country,
-                "chart_type": chart_type,
-                "category": category,
+                "chart_type": CHART_TYPE,
+                "category": genre,
                 "subcategory": subcategory,
                 "rank": r["rank"],
                 "app_id": r["app_id"],
@@ -198,7 +187,6 @@ def run_once():
             }
             all_rows.append(row)
 
-        # деликатен sleep за да не правим твърде много заявки
         time.sleep(0.6)
 
     if not all_rows:
