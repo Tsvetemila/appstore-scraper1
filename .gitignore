@@ -1,16 +1,28 @@
-# Python virtual environment
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Virtual env
 .venv/
-venv/
+env/
 
 # Databases
 *.db
+*.sqlite3
 
-# CSV exports
+# CSV / exports
 *.csv
-
-# Python cache
-__pycache__/
-*.pyc
 
 # Logs
 *.log
+
+# Node / frontend
+node_modules/
+dist/
+build/
+
+# System
+.DS_Store
+Thumbs.db
