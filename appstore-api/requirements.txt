@@ -3,3 +3,7 @@ uvicorn
 requests
 python-dateutil
 sqlalchemy
+pandas
+beautifulsoup4
+lxml
+python-multipart
