@@ -1,247 +1,173 @@
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse
+from fastapi import FastAPI, Query
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 import sqlite3
-from typing import List, Dict
 import os
-import pandas as pd
+from datetime import datetime, timedelta
 
-app = FastAPI(title="App Store Charts API")
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DB_PATH = os.path.join(BASE_DIR, "data", "app_data.db")
 
-# Абсолютен път към базата (спрямо папката на файла)
-DB_PATH = os.path.join(os.path.dirname(__file__), "app_data.db")
+app = FastAPI(title="App Store API")
 
-def query_db(query: str, params: tuple = ()) -> List[Dict]:
-    """Помощна функция за заявки към SQLite"""
-    con = sqlite3.connect(DB_PATH)
-    con.row_factory = sqlite3.Row
-    rows = con.execute(query, params).fetchall()
-    con.close()
-    return [dict(row) for row in rows]
+# CORS – фронтът е на Vite (5173)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
-@app.get("/")
-def root():
-    return {"status": "ok", "message": "App Store API working with charts table"}
+def connect():
+    return sqlite3.connect(DB_PATH)
+
+def get_latest_date(conn: sqlite3.Connection) -> str:
+    cur = conn.cursor()
+    cur.execute("SELECT MAX(snapshot_date) FROM charts")
+    row = cur.fetchone()
+    return row[0] if row and row[0] else None
 
 @app.get("/health")
 def health():
-    if not os.path.exists(DB_PATH):
-        return {"status": "missing", "db_path": DB_PATH, "rows": 0}
+    try:
+        conn = connect()
+        cur = conn.cursor()
+        cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='charts'")
+        ok = cur.fetchone() is not None
+        conn.close()
+        return {"ok": ok, "db": DB_PATH, "db_error": None}
+    except Exception as e:
+        return {"ok": False, "db": DB_PATH, "db_error": str(e)}
 
-    con = sqlite3.connect(DB_PATH)
-    cur = con.cursor()
-    cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='charts'")
-    table = cur.fetchone()
-    if not table:
-        con.close()
-        return {"status": "missing", "db_path": DB_PATH, "rows": 0}
+# ---------- META (динамични филтри) ----------
+@app.get("/meta")
+def meta():
+    conn = connect()
+    cur = conn.cursor()
 
-    cur.execute("SELECT COUNT(*) FROM charts")
-    count = cur.fetchone()[0]
-    con.close()
-    return {"status": "ok", "db_path": DB_PATH, "rows": count}
+    cur.execute("SELECT DISTINCT country FROM charts WHERE country IS NOT NULL AND country <> '' ORDER BY country")
+    countries = [r[0] for r in cur.fetchall()]
 
-@app.get("/current")
-def get_current(country: str = "BG", chart_type: str = "top_free",
-                category: str = "Games", subcategory: str = "Arcade"):
-    query = """
-    SELECT *
-    FROM charts
-    WHERE snapshot_date = (SELECT MAX(snapshot_date) FROM charts)
-      AND country = ?
-      AND chart_type = ?
-      AND category = ?
-      AND IFNULL(subcategory,'') = ?
-    ORDER BY rank ASC
-    LIMIT 50
-    """
-    rows = query_db(query, (country, chart_type, category, subcategory))
-    return {"count": len(rows), "results": rows}
+    cur.execute("SELECT DISTINCT category FROM charts WHERE category IS NOT NULL AND category <> '' ORDER BY category")
+    categories = [r[0] for r in cur.fetchall()]
 
-@app.get("/available")
-def available():
-    query = """
-    SELECT DISTINCT country, chart_type, category, IFNULL(subcategory,'') AS subcategory
-    FROM charts
-    ORDER BY country, chart_type, category, subcategory
-    """
-    rows = query_db(query)
-    return rows
+    cur.execute("SELECT DISTINCT subcategory FROM charts WHERE subcategory IS NOT NULL AND subcategory <> '' ORDER BY subcategory")
+    subcategories = [r[0] for r in cur.fetchall()]
 
-@app.get("/compare7")
-def compare7(country: str = "BG", chart_type: str = "top_free",
-             category: str = "Games", subcategory: str = "Arcade"):
-    """
-    История на current top50 спрямо всички последни 7 дни.
-    За всяко приложение дава ranks ден по ден.
-    """
-    latest_date_query = "SELECT MAX(snapshot_date) as d FROM charts"
-    latest_date = query_db(latest_date_query)[0]["d"]
-    if not latest_date:
-        raise HTTPException(status_code=404, detail="No data in charts")
+    conn.close()
 
-    dates_query = """
-    SELECT DISTINCT snapshot_date
-    FROM charts
-    WHERE snapshot_date <= ?
-      AND snapshot_date >= date(?, '-6 day')
-    ORDER BY snapshot_date ASC
-    """
-    dates = [r["snapshot_date"] for r in query_db(dates_query, (latest_date, latest_date))]
-    if not dates:
-        raise HTTPException(status_code=404, detail="No snapshots in last 7 days")
-
-    top_query = """
-    SELECT app_id, app_name
-    FROM charts
-    WHERE snapshot_date = ?
-      AND country = ?
-      AND chart_type = ?
-      AND category = ?
-      AND IFNULL(subcategory,'') = ?
-    ORDER BY rank ASC
-    LIMIT 50
-    """
-    top_apps = query_db(top_query, (latest_date, country, chart_type, category, subcategory))
-    app_ids = [a["app_id"] for a in top_apps]
-
-    if not app_ids:
-        raise HTTPException(status_code=404, detail="No apps in current top50")
-
-    hist_query = f"""
-    SELECT snapshot_date, app_id, rank
-    FROM charts
-    WHERE app_id IN ({",".join(["?"]*len(app_ids))})
-      AND country = ?
-      AND chart_type = ?
-      AND category = ?
-      AND IFNULL(subcategory,'') = ?
-      AND snapshot_date IN ({",".join(["?"]*len(dates))})
-    """
-    rows = query_db(hist_query, (*app_ids, country, chart_type, category, subcategory, *dates))
-
-    history_map = {a["app_id"]: {"app_name": a["app_name"], "history": {d: None for d in dates}} for a in top_apps}
-    for r in rows:
-        history_map[r["app_id"]]["history"][r["snapshot_date"]] = r["rank"]
-
-    results = []
-    for app_id, data in history_map.items():
-        results.append({
-            "app_id": app_id,
-            "app_name": data["app_name"],
-            "history": [{"date": d, "rank": data["history"][d]} for d in dates]
-        })
-
-    return {"latest_date": latest_date, "dates": dates, "count": len(results), "results": results}
-
-@app.get("/trending")
-def trending(country: str = "BG", chart_type: str = "top_free",
-             category: str = "Games", subcategory: str = "Arcade", days: int = 7, limit: int = 10):
-    """
-    Приложенията с най-голямо движение (up/down) в рамките на последните N дни.
-    """
-    latest_date_query = "SELECT MAX(snapshot_date) as d FROM charts"
-    latest_date = query_db(latest_date_query)[0]["d"]
-    if not latest_date:
-        raise HTTPException(status_code=404, detail="No data in charts")
-
-    dates_query = """
-    SELECT DISTINCT snapshot_date
-    FROM charts
-    WHERE snapshot_date <= ?
-      AND snapshot_date >= date(?, ?)
-    ORDER BY snapshot_date ASC
-    """
-    dates = [r["snapshot_date"] for r in query_db(dates_query, (latest_date, latest_date, f"-{days-1} day"))]
-    if not dates:
-        raise HTTPException(status_code=404, detail=f"No snapshots in last {days} days")
-
-    hist_query = f"""
-    SELECT snapshot_date, app_id, app_name, rank
-    FROM charts
-    WHERE country = ?
-      AND chart_type = ?
-      AND category = ?
-      AND IFNULL(subcategory,'') = ?
-      AND snapshot_date IN ({",".join(["?"]*len(dates))})
-    """
-    rows = query_db(hist_query, (country, chart_type, category, subcategory, *dates))
-
-    app_map = {}
-    for r in rows:
-        app_id = r["app_id"]
-        if app_id not in app_map:
-            app_map[app_id] = {"app_name": r["app_name"], "ranks": []}
-        app_map[app_id]["ranks"].append(r["rank"])
-
-    movements = []
-    for app_id, data in app_map.items():
-        if not data["ranks"]:
-            continue
-        min_rank = min(data["ranks"])
-        max_rank = max(data["ranks"])
-        change = max_rank - min_rank
-        movements.append({
-            "app_id": app_id,
-            "app_name": data["app_name"],
-            "min_rank": min_rank,
-            "max_rank": max_rank,
-            "change": change,
-            "history_len": len(data["ranks"])
-        })
-
-    movements_sorted = sorted(movements, key=lambda x: abs(x["change"]), reverse=True)
+    # fallback ако няма стойности
+    if not countries:
+        countries = ["All countries"]
+    if not categories:
+        categories = ["All categories"]
+    if not subcategories:
+        subcategories = ["All subcategories"]
 
     return {
-        "latest_date": latest_date,
-        "dates": dates,
-        "days": days,
-        "results": movements_sorted[:limit]
+        "countries": countries,
+        "categories": categories,
+        "subcategories": subcategories
     }
 
-@app.get("/history")
-def history(app_id: str, days: int = 7, country: str = "BG",
-            chart_type: str = "top_free", category: str = "Games", subcategory: str = "Arcade"):
-    query = """
-    SELECT snapshot_date, app_id, app_name, rank, country, chart_type, category, IFNULL(subcategory,'') as subcategory
-    FROM charts
-    WHERE app_id = ?
-      AND country = ?
-      AND chart_type = ?
-      AND category = ?
-      AND IFNULL(subcategory,'') = ?
-      AND snapshot_date >= date((SELECT MAX(snapshot_date) FROM charts), ?)
-    ORDER BY snapshot_date ASC
+# ---------- TRENDING: Top 50 FREE, с филтри ----------
+class TrendingItem(BaseModel):
+    app_id: str
+    app_name: str
+    min_rank: int | None
+    max_rank: int | None
+    change: int | None
+    country: str
+    chart_type: str
+    category: str
+    subcategory: str
+
+@app.get("/trending")
+def get_trending(
+    country: str = Query("all"),
+    category: str = Query("all"),
+    subcategory: str = Query("all"),
+    days: int = Query(7, ge=1, le=30),
+    limit: int = Query(50, ge=1, le=200)
+):
     """
-    days_param = f"-{days} day"
-    rows = query_db(query, (app_id, country, chart_type, category, subcategory, days_param))
-
-    if not rows:
-        raise HTTPException(status_code=404, detail="No history for this app")
-
-    return {"app_id": app_id, "days": days, "count": len(rows), "results": rows}
-
-@app.get("/export_csv")
-def export_csv(country: str = "BG", chart_type: str = "top_free",
-               category: str = "Games", subcategory: str = "Arcade"):
-    query = """
-    SELECT *
-    FROM charts
-    WHERE snapshot_date = (SELECT MAX(snapshot_date) FROM charts)
-      AND country = ?
-      AND chart_type = ?
-      AND category = ?
-      AND IFNULL(subcategory,'') = ?
-    ORDER BY rank ASC
-    LIMIT 50
+    Винаги връщаме Top 50 (limit) за chart='top_free' в последните N дни.
+    Филтрите са опционални (all = без ограничение).
     """
-    con = sqlite3.connect(DB_PATH)
-    df = pd.read_sql_query(query, con, params=(country, chart_type, category, subcategory))
-    con.close()
+    conn = connect()
+    cur = conn.cursor()
 
-    if df.empty:
-        raise HTTPException(status_code=404, detail="No data for this context")
+    latest = get_latest_date(conn)
+    if not latest:
+        conn.close()
+        return {"results": []}
 
-    out_path = f"export_{country}_{chart_type}_{category}_{subcategory}.csv"
-    df.to_csv(out_path, index=False, encoding="utf-8-sig")
+    latest_dt = datetime.fromisoformat(latest)
+    start_dt = (latest_dt - timedelta(days=days - 1)).date().isoformat()
+    end_dt = latest_dt.date().isoformat()
 
-    return FileResponse(out_path, media_type="text/csv", filename=os.path.basename(out_path))
+    # динамично сглобяване на WHERE
+    params = [start_dt, end_dt]
+    where_extra = ""
+    if country.lower() != "all":
+        where_extra += " AND country = ?"
+        params.append(country)
+    if category.lower() != "all":
+        where_extra += " AND category = ?"
+        params.append(category)
+    if subcategory.lower() != "all":
+        where_extra += " AND subcategory = ?"
+        params.append(subcategory)
+
+    sql = f"""
+    WITH window AS (
+        SELECT snapshot_date, app_id, app_name, rank, country, chart_type, category, subcategory
+        FROM charts
+        WHERE chart_type = 'top_free'
+          AND snapshot_date BETWEEN ? AND ?
+          {where_extra}
+    ),
+    first_last AS (
+        SELECT w.app_id,
+               (SELECT rank FROM window WHERE app_id = w.app_id ORDER BY snapshot_date ASC  LIMIT 1) AS first_rank,
+               (SELECT rank FROM window WHERE app_id = w.app_id ORDER BY snapshot_date DESC LIMIT 1) AS last_rank
+        FROM window w
+        GROUP BY w.app_id
+    )
+    SELECT
+        w.app_id,
+        MAX(w.app_name) AS app_name,
+        MIN(w.rank)     AS min_rank,
+        MAX(w.rank)     AS max_rank,
+        (fl.last_rank - fl.first_rank) AS change,
+        (SELECT country     FROM window wx WHERE wx.app_id = w.app_id ORDER BY snapshot_date DESC LIMIT 1) AS country,
+        (SELECT chart_type  FROM window wx WHERE wx.app_id = w.app_id ORDER BY snapshot_date DESC LIMIT 1) AS chart_type,
+        (SELECT category    FROM window wx WHERE wx.app_id = w.app_id ORDER BY snapshot_date DESC LIMIT 1) AS category,
+        (SELECT subcategory FROM window wx WHERE wx.app_id = w.app_id ORDER BY snapshot_date DESC LIMIT 1) AS subcategory
+    FROM window w
+    JOIN first_last fl ON fl.app_id = w.app_id
+    GROUP BY w.app_id
+    ORDER BY MIN(w.rank) ASC
+    LIMIT ?
+    """
+    params.append(limit)
+
+    cur.execute(sql, params)
+    rows = cur.fetchall()
+    conn.close()
+
+    results = []
+    for r in rows:
+        results.append({
+            "app_id": r[0],
+            "app_name": r[1],
+            "min_rank": r[2],
+            "max_rank": r[3],
+            "change": r[4] if r[4] is not None else 0,
+            "country": r[5] if r[5] else "N/A",
+            "chart_type": r[6] if r[6] else "N/A",
+            "category": r[7] if r[7] else "N/A",
+            "subcategory": r[8] if r[8] else "N/A",
+        })
+    return {"results": results}

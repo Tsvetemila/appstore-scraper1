@@ -1,5 +1,9 @@
-requests==2.32.3
-pandas==2.2.2
-lxml==4.9.3
-beautifulsoup4==4.12.2
-python-dateutil>=2.8
+fastapi
+uvicorn
+requests
+python-dateutil
+sqlalchemy
+pandas
+beautifulsoup4
+lxml
+python-multipart
