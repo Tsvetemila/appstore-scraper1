@@ -7,12 +7,11 @@ from datetime import datetime
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.path.join(BASE_DIR, "..", "appstore-api", "data", "app_data.db")
 
-# Държави
+# Държави (според брифа)
 COUNTRIES = ["US", "GB", "FR", "DE", "ES", "RU"]
 
-# Основни категории
+# Основни App категории (без General)
 APP_CATEGORIES = {
-    "all": None,  # General Top 50
     "books": 6018,
     "business": 6000,
     "developer-tools": 6026,
@@ -114,12 +113,9 @@ def scrape():
     total = 0
 
     for country in COUNTRIES:
-        # General + App categories
+        # App categories
         for cat_name, cat_id in APP_CATEGORIES.items():
-            url = f"https://rss.applemarketingtools.com/api/v2/{country.lower()}/apps/top-free/50/apps.json"
-            if cat_id:
-                url = f"https://rss.applemarketingtools.com/api/v2/{country.lower()}/apps/top-free/{cat_id}/50/apps.json"
-
+            url = f"https://rss.applemarketingtools.com/api/v2/{country.lower()}/apps/top-free/{cat_id}/50/apps.json"
             data = http_get_json(url)
             if not data:
                 print(f"[INFO] Empty feed for {country}/{cat_name}")
