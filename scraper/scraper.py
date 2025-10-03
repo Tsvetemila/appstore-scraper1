@@ -2,15 +2,16 @@ import requests
 import sqlite3
 import os
 import time
+import json
 from datetime import datetime
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.path.join(BASE_DIR, "..", "appstore-api", "data", "app_data.db")
 
-# Държави (според брифа)
+# Държави според брифа
 COUNTRIES = ["US", "GB", "FR", "DE", "ES", "RU"]
 
-# Основни App категории (без General)
+# App категории (без General)
 APP_CATEGORIES = {
     "books": 6018,
     "business": 6000,
@@ -39,7 +40,7 @@ APP_CATEGORIES = {
     "weather": 6001,
 }
 
-# Подкатегории на Games
+# Game подкатегории
 GAME_CATEGORIES = {
     "action": 7001,
     "adventure": 7002,
@@ -62,6 +63,7 @@ GAME_CATEGORIES = {
 HTTP_TIMEOUT = 10
 HTTP_RETRIES = 3
 
+
 def http_get_json(url: str):
     for attempt in range(1, HTTP_RETRIES + 1):
         try:
@@ -78,6 +80,7 @@ def http_get_json(url: str):
         time.sleep(1.2 * attempt)
     return None
 
+
 def ensure_schema(conn):
     cur = conn.cursor()
     cur.execute("""
@@ -89,22 +92,60 @@ def ensure_schema(conn):
             chart_type TEXT,
             rank INTEGER,
             app_id TEXT,
+            bundle_id TEXT,
             app_name TEXT,
+            developer_name TEXT,
+            price REAL,
+            currency TEXT,
+            rating REAL,
+            ratings_count INTEGER,
+            raw TEXT,
             PRIMARY KEY (snapshot_date, country, category, subcategory, chart_type, rank)
         )
     """)
     conn.commit()
+
 
 def insert_rows(conn, rows):
     cur = conn.cursor()
     cur.executemany("""
         INSERT OR REPLACE INTO charts (
             snapshot_date, country, category, subcategory, chart_type,
-            rank, app_id, app_name
+            rank, app_id, bundle_id, app_name, developer_name,
+            price, currency, rating, ratings_count, raw
         )
-        VALUES (?,?,?,?,?,?,?,?)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     """, rows)
     conn.commit()
+
+
+def fetch_rss(country: str, genre_id: int):
+    url = f"https://rss.applemarketingtools.com/api/v2/{country.lower()}/apps/top-free/{genre_id}/50/apps.json"
+    return http_get_json(url)
+
+
+def enrich_with_lookup(country: str, app_ids: list):
+    """Обогатява с информация от iTunes Lookup"""
+    out = {}
+    for i in range(0, len(app_ids), 50):
+        chunk = app_ids[i:i + 50]
+        ids_param = ",".join(chunk)
+        url = f"https://itunes.apple.com/lookup?id={ids_param}&country={country}"
+        data = http_get_json(url) or {}
+        for r in data.get("results", []):
+            app_id = str(r.get("trackId") or "")
+            if not app_id:
+                continue
+            out[app_id] = {
+                "bundle_id": r.get("bundleId"),
+                "price": r.get("price"),
+                "currency": r.get("currency"),
+                "rating": r.get("averageUserRating"),
+                "ratings_count": r.get("userRatingCount"),
+                "raw": json.dumps(r, ensure_ascii=False)
+            }
+    return out
+
 
 def scrape():
     snapshot_date = datetime.utcnow().date().isoformat()
@@ -113,37 +154,61 @@ def scrape():
     total = 0
 
     for country in COUNTRIES:
-        # App categories
+        # App категории
         for cat_name, cat_id in APP_CATEGORIES.items():
-            url = f"https://rss.applemarketingtools.com/api/v2/{country.lower()}/apps/top-free/{cat_id}/50/apps.json"
-            data = http_get_json(url)
+            data = fetch_rss(country, cat_id)
             if not data:
                 print(f"[INFO] Empty feed for {country}/{cat_name}")
                 continue
 
+            apps = data.get("feed", {}).get("results", [])
+            app_ids = [str(a["id"]) for a in apps]
+            lookup = enrich_with_lookup(country, app_ids)
+
             rows = []
-            for i, app in enumerate(data.get("feed", {}).get("results", []), start=1):
+            for i, app in enumerate(apps, start=1):
+                info = lookup.get(str(app["id"]), {})
                 rows.append((
                     snapshot_date, country, cat_name.capitalize(), None,
-                    "top_free", i, app["id"], app["name"]
+                    "top_free", i, str(app["id"]),
+                    info.get("bundle_id"),
+                    app.get("name"),
+                    app.get("artistName"),
+                    info.get("price"),
+                    info.get("currency"),
+                    info.get("rating"),
+                    info.get("ratings_count"),
+                    info.get("raw")
                 ))
             insert_rows(conn, rows)
             total += len(rows)
             print(f"[INFO] {country} {cat_name} top_free: {len(rows)} apps")
 
-        # Game subcategories
+        # Game подкатегории
         for subcat, sub_id in GAME_CATEGORIES.items():
-            url = f"https://rss.applemarketingtools.com/api/v2/{country.lower()}/apps/top-free/{sub_id}/50/apps.json"
-            data = http_get_json(url)
+            data = fetch_rss(country, sub_id)
             if not data:
                 print(f"[INFO] Empty feed for {country}/Games/{subcat}")
                 continue
 
+            apps = data.get("feed", {}).get("results", [])
+            app_ids = [str(a["id"]) for a in apps]
+            lookup = enrich_with_lookup(country, app_ids)
+
             rows = []
-            for i, app in enumerate(data.get("feed", {}).get("results", []), start=1):
+            for i, app in enumerate(apps, start=1):
+                info = lookup.get(str(app["id"]), {})
                 rows.append((
                     snapshot_date, country, "Games", subcat.capitalize(),
-                    "top_free", i, app["id"], app["name"]
+                    "top_free", i, str(app["id"]),
+                    info.get("bundle_id"),
+                    app.get("name"),
+                    app.get("artistName"),
+                    info.get("price"),
+                    info.get("currency"),
+                    info.get("rating"),
+                    info.get("ratings_count"),
+                    info.get("raw")
                 ))
             insert_rows(conn, rows)
             total += len(rows)
@@ -151,6 +216,7 @@ def scrape():
 
     conn.close()
     print(f"[OK] inserted {total} rows into charts for date {snapshot_date}")
+
 
 if __name__ == "__main__":
     scrape()
