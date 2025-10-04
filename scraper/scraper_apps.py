@@ -1,7 +1,6 @@
 # scraper_apps.py
-import requests, sqlite3, os, time, json, csv
+import requests, sqlite3, os, time, json
 from datetime import datetime
-from pathlib import Path
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.path.join(BASE_DIR, "..", "appstore-api", "data", "app_data.db")
@@ -23,8 +22,11 @@ def http_get_json(url: str):
     for attempt in range(1, HTTP_RETRIES + 1):
         try:
             r = requests.get(url, timeout=HTTP_TIMEOUT, headers={"User-Agent": "charts-bot/1.0"})
-            if r.status_code == 200: return r.json()
-            if r.status_code == 404: print(f"[INFO] No chart at {url}"); return None
+            if r.status_code == 200:
+                return r.json()
+            if r.status_code == 404:
+                print(f"[INFO] 404 no chart at {url}")
+                return None
             print(f"[WARN] {r.status_code} from {url}")
         except Exception as e:
             print(f"[WARN] attempt {attempt}/{HTTP_RETRIES} failed for {url}: {e}")
@@ -55,8 +57,15 @@ def insert_rows(conn, rows):
     conn.commit()
 
 def fetch_rss(country: str, genre_id: int):
+    """Fetch data from Apple RSS with fallback if genre feed is empty."""
     url = f"https://rss.applemarketingtools.com/api/v2/{country.lower()}/apps/top-free/{genre_id}/50/apps.json"
-    return http_get_json(url)
+    data = http_get_json(url)
+    # fallback if empty
+    if not data or not data.get("feed", {}).get("results"):
+        fallback_url = f"https://rss.applemarketingtools.com/api/v2/{country.lower()}/apps/top-free/50/apps.json"
+        print(f"[FALLBACK] Empty feed for {country}/{genre_id}, switching to general feed.")
+        data = http_get_json(fallback_url)
+    return data
 
 def enrich_with_lookup(country: str, app_ids: list):
     out = {}
@@ -66,7 +75,8 @@ def enrich_with_lookup(country: str, app_ids: list):
         data = http_get_json(url) or {}
         for r in data.get("results", []):
             app_id = str(r.get("trackId") or "")
-            if not app_id: continue
+            if not app_id:
+                continue
             out[app_id] = {
                 "bundle_id": r.get("bundleId"),
                 "price": r.get("price"),
@@ -91,6 +101,10 @@ def scrape_apps():
                 continue
 
             apps = data.get("feed", {}).get("results", [])
+            if not apps:
+                print(f"[INFO] No apps for {country}/{cat_name}")
+                continue
+
             app_ids = [str(a["id"]) for a in apps]
             lookup = enrich_with_lookup(country, app_ids)
 
@@ -105,9 +119,10 @@ def scrape_apps():
                     info.get("rating"), info.get("ratings_count"),
                     info.get("raw")
                 ))
-            insert_rows(conn, rows)
-            total += len(rows)
-            print(f"[INFO] {country} {cat_name} top_free: {len(rows)}")
+            if rows:
+                insert_rows(conn, rows)
+                total += len(rows)
+                print(f"[INFO] {country} {cat_name} top_free: {len(rows)}")
 
     conn.close()
     print(f"[OK] APPS inserted {total} rows for date {snapshot_date}")
