@@ -13,6 +13,8 @@ GAME_CATEGORIES = {
     "casino": 7006, "casual": 7007, "family": 7008, "music": 7011,
     "puzzle": 7012, "racing": 7013, "role-playing": 7014, "simulation": 7015,
     "sports": 7016, "strategy": 7017, "trivia": 7018, "word": 7019,
+# допълнително оставяме старите ID-та за съвместимост:
+    "casual_legacy": 7007, "family_legacy": 7008
 }
 
 HTTP_TIMEOUT, HTTP_RETRIES = 10, 3
