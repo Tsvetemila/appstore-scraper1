@@ -9,7 +9,7 @@ jobs:
   scrape:
     runs-on: ubuntu-latest
     permissions:
-      contents: write   # остава ако по-късно решим пак да комитваме БД
+      contents: write   # оставяме го, ако решим да комитваме по-късно
 
     steps:
       - name: Checkout repository
@@ -26,14 +26,20 @@ jobs:
           if [ -f scraper/requirements.txt ]; then pip install -r scraper/requirements.txt; fi
           pip install requests
 
-      - name: Run scraper
-        run: python scraper/scraper.py
+      # --- НОВО: пускаме двата скрейпъра и после merge ---
+      - name: Scrape APPS categories
+        run: python scraper/scraper_apps.py
+
+      - name: Scrape GAMES subcategories
+        run: python scraper/scraper_games.py
+
+      - name: Merge & Export CSV
+        run: python scraper/merge_results.py
+      # ---------------------------------------------------
 
       - name: Verify files exist
         run: |
           ls -lh appstore-api/data/ || true
-          echo "---- last 20 lines of log-like output ----"
-          tail -n 20 $(git rev-parse --show-toplevel)/${GITHUB_WORKSPACE:-.}/* 2>/dev/null || true
 
       # Качваме артефактите (БД + CSV)
       - name: Upload database artifact
@@ -51,4 +57,3 @@ jobs:
           path: appstore-api/data/charts_*.csv
           if-no-files-found: error
           retention-days: 14
-
