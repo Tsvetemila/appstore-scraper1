@@ -18,7 +18,7 @@ def export_latest_csv(db_path: str, out_dir: str | Path | None = None) -> Path:
         cur.execute("""
             SELECT snapshot_date, country, category, subcategory, chart_type,
                    rank, app_id, bundle_id, app_name, developer_name,
-                   price, currency, rating, ratings_count
+                   price, currency, rating, ratings_count, genre_id
             FROM charts
             WHERE snapshot_date = ?
             ORDER BY country, category, COALESCE(subcategory,''), rank
@@ -29,7 +29,7 @@ def export_latest_csv(db_path: str, out_dir: str | Path | None = None) -> Path:
     header = [
         "snapshot_date","country","category","subcategory","chart_type",
         "rank","app_id","bundle_id","app_name","developer_name",
-        "price","currency","rating","ratings_count",
+        "price","currency","rating","ratings_count","genre_id",
     ]
     with out_path.open("w", encoding="utf-8", newline="") as f:
         w = csv.writer(f); w.writerow(header); w.writerows(rows)

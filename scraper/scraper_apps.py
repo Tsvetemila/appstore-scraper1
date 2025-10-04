@@ -1,18 +1,26 @@
 # scraper_apps.py
-import requests, sqlite3, os, time, json
+import os, time, json, sqlite3, requests
 from datetime import datetime
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DB_PATH = os.path.join(BASE_DIR, "..", "appstore-api", "data", "app_data.db")
+DB_PATH   = os.path.join(BASE_DIR, "..", "appstore-api", "data", "app_data.db")
 
-# Обновен списък с държави
+# Държави (разширени с IT и CA)
 COUNTRIES = ["US", "GB", "FR", "DE", "ES", "RU", "IT", "CA"]
+
+# APP категории: {slug/label: genre_id}
+APP_CATEGORIES = {
+    "books": 6018, "business": 6000, "developer-tools": 6026, "education": 6017,
+    "entertainment": 6016, "finance": 6015, "food-drink": 6023, "graphics-design": 6027,
+    "health-fitness": 6013, "kids": 6061, "lifestyle": 6012, "magazines-newspapers": 6021,
+    "medical": 6020, "music": 6011, "navigation": 6010, "news": 6009, "photo-video": 6008,
+    "productivity": 6007, "reference": 6006, "shopping": 6024, "social-networking": 6005,
+    "sports": 6004, "travel": 6003, "utilities": 6002, "weather": 6001,
+}
 
 HTTP_TIMEOUT, HTTP_RETRIES = 10, 3
 
-
 def http_get_json(url: str):
-    """GET заявка с retry и логове."""
     for attempt in range(1, HTTP_RETRIES + 1):
         try:
             r = requests.get(url, timeout=HTTP_TIMEOUT, headers={"User-Agent": "charts-bot/1.0"})
@@ -24,42 +32,39 @@ def http_get_json(url: str):
             print(f"[WARN] HTTP {r.status_code} from {url}")
         except Exception as e:
             print(f"[WARN] attempt {attempt}/{HTTP_RETRIES} failed for {url}: {e}")
-        time.sleep(1.2 * attempt)
+        time.sleep(1.1 * attempt)
     return None
 
-
 def ensure_schema(conn):
-    """Създава таблицата charts, ако липсва. Добавя genre_id при нужда."""
     cur = conn.cursor()
     cur.execute("""
         CREATE TABLE IF NOT EXISTS charts (
             snapshot_date TEXT,
-            country TEXT,
-            category TEXT,
-            subcategory TEXT,
-            chart_type TEXT,
-            rank INTEGER,
-            app_id TEXT,
-            bundle_id TEXT,
-            app_name TEXT,
+            country       TEXT,
+            category      TEXT,
+            subcategory   TEXT,
+            chart_type    TEXT,
+            rank          INTEGER,
+            app_id        TEXT,
+            bundle_id     TEXT,
+            app_name      TEXT,
             developer_name TEXT,
-            price REAL,
-            currency TEXT,
-            rating REAL,
+            price         REAL,
+            currency      TEXT,
+            rating        REAL,
             ratings_count INTEGER,
-            genre_id TEXT,
-            raw TEXT,
+            genre_id      TEXT,
+            raw           TEXT,
             PRIMARY KEY (snapshot_date, country, category, subcategory, chart_type, rank)
         )
     """)
-    # Проверяваме дали genre_id съществува — ако не, добавяме го
+    # добавяме genre_id ако липсва
     cur.execute("PRAGMA table_info(charts)")
-    cols = [r[1] for r in cur.fetchall()]
+    cols = [c[1] for c in cur.fetchall()]
     if "genre_id" not in cols:
         print("[INFO] Adding missing column genre_id to charts table.")
         cur.execute("ALTER TABLE charts ADD COLUMN genre_id TEXT;")
     conn.commit()
-
 
 def insert_rows(conn, rows):
     conn.executemany("""
@@ -71,18 +76,66 @@ def insert_rows(conn, rows):
     """, rows)
     conn.commit()
 
-
-def fetch_top_free(country: str):
-    """Взима top-free feed за дадена държава."""
-    url = f"https://rss.applemarketingtools.com/api/v2/{country.lower()}/apps/top-free/50/apps.json"
+# ---- FEEDS ----
+def fetch_marketingtools_genre(country: str, genre_id: int):
+    # marketingtools per-genre feed (вече често е празен, но пробваме първо)
+    url = f"https://rss.applemarketingtools.com/api/v2/{country.lower()}/apps/top-free/{genre_id}/50/apps.json"
     return http_get_json(url)
 
+def fetch_itunes_genre(country: str, genre_id: int):
+    # старият iTunes RSS per-genre – стабилен
+    url = f"https://itunes.apple.com/{country.lower()}/rss/topfreeapplications/limit=50/genre={genre_id}/json"
+    return http_get_json(url)
+
+def parse_marketingtools_results(data):
+    # формат: feed.results[{id,name,artistName}]
+    res = []
+    for i, a in enumerate(data.get("feed", {}).get("results", []), start=1):
+        res.append({
+            "rank": i,
+            "id": str(a.get("id")),
+            "name": a.get("name"),
+            "artistName": a.get("artistName"),
+        })
+    return res
+
+def parse_itunes_results(data):
+    # формат: feed.entry – в id.label има URL с /id123456789?
+    res = []
+    entries = data.get("feed", {}).get("entry", []) or []
+    for i, e in enumerate(entries, start=1):
+        # id.label: ".../id123456789?mt=8"
+        id_url = ((e.get("id") or {}).get("label") or "")
+        app_id = ""
+        if "/id" in id_url:
+            try:
+                app_id = id_url.split("/id", 1)[1].split("?", 1)[0]
+            except Exception:
+                app_id = ""
+        name = ((e.get("im:name") or {}).get("label")) or (e.get("title") or {}).get("label")
+        artist = ((e.get("im:artist") or {}).get("label")) or ""
+        res.append({"rank": i, "id": app_id, "name": name, "artistName": artist})
+    return res
+
+def fetch_genre_top50(country: str, genre_id: int):
+    # 1) опит с marketingtools
+    data = fetch_marketingtools_genre(country, genre_id)
+    items = parse_marketingtools_results(data) if data else []
+    if items:
+        return items, "marketingtools"
+    # 2) fallback към iTunes RSS
+    data = fetch_itunes_genre(country, genre_id)
+    items = parse_itunes_results(data) if data else []
+    if items:
+        print(f"[FALLBACK] Using iTunes RSS for {country}/{genre_id}")
+    return items, "itunes"
 
 def enrich_with_lookup(country: str, app_ids: list):
-    """Добавя подробности за всяко приложение чрез iTunes Lookup."""
     out = {}
     for i in range(0, len(app_ids), 50):
-        chunk = app_ids[i:i + 50]
+        chunk = [x for x in app_ids[i:i+50] if x]
+        if not chunk: 
+            continue
         url = f"https://itunes.apple.com/lookup?id={','.join(chunk)}&country={country}"
         data = http_get_json(url) or {}
         for r in data.get("results", []):
@@ -96,11 +149,10 @@ def enrich_with_lookup(country: str, app_ids: list):
                 "rating": r.get("averageUserRating"),
                 "ratings_count": r.get("userRatingCount"),
                 "genre_id": str(r.get("primaryGenreId")),
-                "category": r.get("primaryGenreName"),
+                "primaryGenreName": r.get("primaryGenreName"),
                 "raw": json.dumps(r, ensure_ascii=False),
             }
     return out
-
 
 def scrape_apps():
     snapshot_date = datetime.utcnow().date().isoformat()
@@ -109,44 +161,35 @@ def scrape_apps():
     total = 0
 
     for country in COUNTRIES:
-        data = fetch_top_free(country)
-        if not data or not data.get("feed", {}).get("results"):
-            print(f"[INFO] Empty top-free feed for {country}")
-            continue
+        for cat_slug, genre_id in APP_CATEGORIES.items():
+            items, src = fetch_genre_top50(country, genre_id)
+            if not items:
+                print(f"[INFO] Empty feed for {country}/{genre_id} ({cat_slug})")
+                continue
 
-        apps = data["feed"]["results"]
-        app_ids = [str(a["id"]) for a in apps]
-        lookup = enrich_with_lookup(country, app_ids)
+            app_ids = [it["id"] for it in items if it.get("id")]
+            lookup = enrich_with_lookup(country, app_ids)
 
-        rows = []
-        for i, app in enumerate(apps, start=1):
-            info = lookup.get(str(app["id"]), {})
-            rows.append((
-                snapshot_date,
-                country,
-                info.get("category") or "Unknown",
-                None,
-                "top_free",
-                i,
-                str(app["id"]),
-                info.get("bundle_id"),
-                app.get("name"),
-                app.get("artistName"),
-                info.get("price"),
-                info.get("currency"),
-                info.get("rating"),
-                info.get("ratings_count"),
-                info.get("genre_id"),
-                info.get("raw")
-            ))
+            rows = []
+            for it in items:
+                info = lookup.get(str(it["id"]), {})  # може да липсва, но пак записваме
+                rows.append((
+                    snapshot_date, country,
+                    cat_slug.replace("-", " ").title(),  # категорията, която обхождаме
+                    None, "top_free", it["rank"], str(it["id"]),
+                    info.get("bundle_id"), it.get("name"), it.get("artistName"),
+                    info.get("price"), info.get("currency"),
+                    info.get("rating"), info.get("ratings_count"),
+                    info.get("genre_id"),
+                    info.get("raw")
+                ))
 
-        insert_rows(conn, rows)
-        total += len(rows)
-        print(f"[INFO] {country} top_free apps: {len(rows)}")
+            insert_rows(conn, rows)
+            total += len(rows)
+            print(f"[INFO] {country} {cat_slug} top_free ({src}): {len(rows)} rows")
 
     conn.close()
     print(f"[OK] APPS inserted {total} rows for date {snapshot_date}")
-
 
 if __name__ == "__main__":
     scrape_apps()
