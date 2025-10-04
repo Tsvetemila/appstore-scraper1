@@ -1,9 +1,12 @@
+# scraper/scraper.py
 import requests
 import sqlite3
 import os
 import time
 import json
+import csv
 from datetime import datetime
+from pathlib import Path
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.path.join(BASE_DIR, "..", "appstore-api", "data", "app_data.db")
@@ -11,7 +14,7 @@ DB_PATH = os.path.join(BASE_DIR, "..", "appstore-api", "data", "app_data.db")
 # Държави според брифа
 COUNTRIES = ["US", "GB", "FR", "DE", "ES", "RU"]
 
-# App категории (без General)
+# App категории (без "General")
 APP_CATEGORIES = {
     "books": 6018,
     "business": 6000,
@@ -125,7 +128,7 @@ def fetch_rss(country: str, genre_id: int):
 
 
 def enrich_with_lookup(country: str, app_ids: list):
-    """Обогатява с информация от iTunes Lookup"""
+    """Обогатява метаданни през iTunes Lookup (bundleId, price, rating, ...)."""
     out = {}
     for i in range(0, len(app_ids), 50):
         chunk = app_ids[i:i + 50]
@@ -145,6 +148,41 @@ def enrich_with_lookup(country: str, app_ids: list):
                 "raw": json.dumps(r, ensure_ascii=False)
             }
     return out
+
+
+def export_latest_csv(db_path: str, out_dir: str | Path | None = None) -> Path:
+    """Експорт на най-новия снапшот в CSV (без 'raw' колоната, за да е лек файл)."""
+    out_dir = Path(out_dir or Path(db_path).parent)
+    with sqlite3.connect(db_path) as con:
+        cur = con.cursor()
+        cur.execute("SELECT MAX(snapshot_date) FROM charts")
+        snap = cur.fetchone()[0]
+        if not snap:
+            raise RuntimeError("No snapshots in DB; nothing to export.")
+
+        cur.execute("""
+            SELECT snapshot_date, country, category, subcategory, chart_type,
+                   rank, app_id, bundle_id, app_name, developer_name,
+                   price, currency, rating, ratings_count
+            FROM charts
+            WHERE snapshot_date = ?
+            ORDER BY country, category, COALESCE(subcategory,''), rank
+        """, (snap,))
+        rows = cur.fetchall()
+
+    out_path = out_dir / f"charts_{snap}.csv"
+    header = [
+        "snapshot_date","country","category","subcategory","chart_type",
+        "rank","app_id","bundle_id","app_name","developer_name",
+        "price","currency","rating","ratings_count",
+    ]
+    with out_path.open("w", encoding="utf-8", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(header)
+        w.writerows(rows)
+
+    print(f"[OK] exported CSV -> {out_path}")
+    return out_path
 
 
 def scrape():
@@ -216,6 +254,9 @@ def scrape():
 
     conn.close()
     print(f"[OK] inserted {total} rows into charts for date {snapshot_date}")
+
+    # Експорт на CSV за най-новия снапшот в същата папка като БД
+    export_latest_csv(DB_PATH)
 
 
 if __name__ == "__main__":
