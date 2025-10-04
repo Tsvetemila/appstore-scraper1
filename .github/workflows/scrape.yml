@@ -9,7 +9,7 @@ jobs:
   scrape:
     runs-on: ubuntu-latest
     permissions:
-      contents: write   # оставяме го, ако решим да комитваме по-късно
+      contents: write
 
     steps:
       - name: Checkout repository
@@ -25,8 +25,9 @@ jobs:
           python -m pip install --upgrade pip
           if [ -f scraper/requirements.txt ]; then pip install -r scraper/requirements.txt; fi
           pip install requests
+          pip install beautifulsoup4 lxml
 
-      # --- НОВО: пускаме двата скрейпъра и после merge ---
+      # --- Новите скриптове ---
       - name: Scrape APPS categories
         run: python scraper/scraper_apps.py
 
@@ -35,13 +36,12 @@ jobs:
 
       - name: Merge & Export CSV
         run: python scraper/merge_results.py
-      # ---------------------------------------------------
+      # ------------------------
 
       - name: Verify files exist
         run: |
           ls -lh appstore-api/data/ || true
 
-      # Качваме артефактите (БД + CSV)
       - name: Upload database artifact
         uses: actions/upload-artifact@v4
         with:
