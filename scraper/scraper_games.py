@@ -19,10 +19,12 @@ HTTP_TIMEOUT, HTTP_RETRIES = 10, 3
 def http_get_json(url: str):
     for attempt in range(1, HTTP_RETRIES + 1):
         try:
-            import requests
             r = requests.get(url, timeout=HTTP_TIMEOUT, headers={"User-Agent": "charts-bot/1.0"})
-            if r.status_code == 200: return r.json()
-            if r.status_code == 404: print(f"[INFO] No chart at {url}"); return None
+            if r.status_code == 200:
+                return r.json()
+            if r.status_code == 404:
+                print(f"[INFO] 404 no chart at {url}")
+                return None
             print(f"[WARN] {r.status_code} from {url}")
         except Exception as e:
             print(f"[WARN] attempt {attempt}/{HTTP_RETRIES} failed for {url}: {e}")
@@ -54,7 +56,12 @@ def insert_rows(conn, rows):
 
 def fetch_rss(country: str, genre_id: int):
     url = f"https://rss.applemarketingtools.com/api/v2/{country.lower()}/apps/top-free/{genre_id}/50/apps.json"
-    return http_get_json(url)
+    data = http_get_json(url)
+    if not data or not data.get("feed", {}).get("results"):
+        fallback_url = f"https://rss.applemarketingtools.com/api/v2/{country.lower()}/apps/top-free/50/apps.json"
+        print(f"[FALLBACK] Empty feed for {country}/Games/{genre_id}, using general feed.")
+        data = http_get_json(fallback_url)
+    return data
 
 def enrich_with_lookup(country: str, app_ids: list):
     out = {}
@@ -64,7 +71,8 @@ def enrich_with_lookup(country: str, app_ids: list):
         data = http_get_json(url) or {}
         for r in data.get("results", []):
             app_id = str(r.get("trackId") or "")
-            if not app_id: continue
+            if not app_id:
+                continue
             out[app_id] = {
                 "bundle_id": r.get("bundleId"),
                 "price": r.get("price"),
@@ -89,6 +97,10 @@ def scrape_games():
                 continue
 
             apps = data.get("feed", {}).get("results", [])
+            if not apps:
+                print(f"[INFO] No apps for {country}/Games/{subcat}")
+                continue
+
             app_ids = [str(a["id"]) for a in apps]
             lookup = enrich_with_lookup(country, app_ids)
 
@@ -103,9 +115,10 @@ def scrape_games():
                     info.get("rating"), info.get("ratings_count"),
                     info.get("raw")
                 ))
-            insert_rows(conn, rows)
-            total += len(rows)
-            print(f"[INFO] {country} Games/{subcat} top_free: {len(rows)}")
+            if rows:
+                insert_rows(conn, rows)
+                total += len(rows)
+                print(f"[INFO] {country} Games/{subcat} top_free: {len(rows)}")
 
     conn.close()
     print(f"[OK] GAMES inserted {total} rows for date {snapshot_date}")
