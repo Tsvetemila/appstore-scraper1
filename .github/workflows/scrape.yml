@@ -5,13 +5,17 @@ services:
     name: appstore-scraper
     env: python
     buildCommand: pip install -r requirements.txt
-    startCommand: python main.py
+    startCommand: bash -lc "python gdrive_sync.py pull || true && python main.py && python gdrive_sync.py push"
     plan: free
     envVars:
       - key: PYTHON_VERSION
         value: 3.11.5
       - key: DATA_PATH
         value: /var/data/app_data.db
+      - key: GDRIVE_FOLDER_ID
+        sync: false
+      - key: GDRIVE_CREDENTIALS_JSON
+        sync: false
     disk:
       name: app_data
       mountPath: /var/data
@@ -24,13 +28,17 @@ services:
     name: appstore-api
     env: python
     buildCommand: pip install -r requirements.txt
-    startCommand: uvicorn main:app --host 0.0.0.0 --port 10000
+    startCommand: bash -lc "python gdrive_sync.py pull && uvicorn main:app --host 0.0.0.0 --port 10000"
     plan: free
     envVars:
       - key: PYTHON_VERSION
         value: 3.11.5
       - key: DATA_PATH
         value: /var/data/app_data.db
+      - key: GDRIVE_FOLDER_ID
+        sync: false
+      - key: GDRIVE_CREDENTIALS_JSON
+        sync: false
     disk:
       name: app_data
       mountPath: /var/data
@@ -38,3 +46,17 @@ services:
     branch: main
     autoDeploy: true
     repo: https://github.com/Tsvetemila/appstore-scraper1
+
+schedules:
+  - name: upload-to-drive
+    type: cron
+    env: python
+    rootDir: appstore-api
+    schedule: "0 22 * * *"   # всеки ден в 22:00 UTC (~01:00 българско)
+    buildCommand: pip install -r requirements.txt
+    startCommand: python upload_to_drive.py
+    envVars:
+      - key: GDRIVE_FOLDER_ID
+        sync: false
+      - key: GDRIVE_CREDENTIALS_JSON
+        sync: false

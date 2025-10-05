@@ -2,15 +2,17 @@ services:
   - type: web
     name: appstore-api
     env: python
-    rootDir: appstore-api
-    buildCommand: pip install -r requirements.txt
-    startCommand: uvicorn main:app --host 0.0.0.0 --port 10000
+    buildCommand: |
+      pip install -r requirements.txt
+    startCommand: |
+      python main.py
     envVars:
-      - key: PYTHON_VERSION
-        value: 3.11
-      - key: DATABASE_URL
-        value: /opt/render/project/src/appstore-api/data/app_data.db
+      - key: GOOGLE_APPLICATION_CREDENTIALS
+        value: /etc/secrets/google_creds.json
+    secrets:
+      - source: GOOGLE_CREDENTIALS
+        dest: /etc/secrets/google_creds.json
     disk:
-      name: data
-      mountPath: /opt/render/project/src/appstore-api/data
+      name: app_data
+      mountPath: /data
       sizeGB: 1
