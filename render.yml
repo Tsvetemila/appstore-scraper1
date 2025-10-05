@@ -2,6 +2,15 @@ services:
   - type: web
     name: appstore-api
     env: python
-    buildCommand: "pip install -r appstore-api/requirements.txt"
-    startCommand: "uvicorn appstore-api.main:app --host 0.0.0.0 --port 10000"
-    plan: free
+    rootDir: appstore-api
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port 10000
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11
+      - key: DATABASE_URL
+        value: /opt/render/project/src/appstore-api/data/app_data.db
+    disk:
+      name: data
+      mountPath: /opt/render/project/src/appstore-api/data
+      sizeGB: 1
