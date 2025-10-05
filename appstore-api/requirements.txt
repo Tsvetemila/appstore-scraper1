@@ -7,4 +7,4 @@ pandas
 beautifulsoup4
 lxml
 python-multipart
-sqlite3-bro
+
