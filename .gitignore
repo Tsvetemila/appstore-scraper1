@@ -1,33 +1,18 @@
-# Python
-__pycache__/
-*.pyc
-*.pyo
-*.pyd
-
-# Virtual env
-.venv/
-env/
-
-# Databases
-*.db
-*.sqlite3
-
-# CSV / exports
-*.csv
-
-# Logs
-*.log
-
-# Node / frontend
-node_modules/
-dist/
-build/
-
-# System
-.DS_Store
-Thumbs.db
-
 # Ignore SQLite databases
 *.db
 *.db-shm
 *.db-wal
+
+# Python cache / virtual environments
+__pycache__/
+*.pyc
+venv/
+
+# Node modules and build artifacts
+node_modules/
+dist/
+build/
+
+# OS files
+.DS_Store
+Thumbs.db
