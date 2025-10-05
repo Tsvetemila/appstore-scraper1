@@ -1,0 +1,7 @@
+services:
+  - type: web
+    name: appstore-api
+    env: python
+    buildCommand: "pip install -r appstore-api/requirements.txt"
+    startCommand: "uvicorn appstore-api.main:app --host 0.0.0.0 --port 10000"
+    plan: free

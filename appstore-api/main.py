@@ -11,10 +11,25 @@ DB_PATH = os.path.join(APP_DIR, "data", "app_data.db")
 app = FastAPI(title="AppStore Charts API", version="1.1")
 
 # --- CORS настройка ---
+# Разрешени фронтенд домейни (статични) + опционално от ENV: ALLOWED_ORIGINS="https://foo.app,https://bar.com"
+_default_origins = {
+    "https://appstore-scraper1.vercel.app",   # продукционният фронтенд
+    "http://localhost:5173",                   # локална разработка (Vite)
+    "http://127.0.0.1:5173",
+}
+_env_origins = {
+    o.strip()
+    for o in os.getenv("ALLOWED_ORIGINS", "").split(",")
+    if o.strip()
+}
+ALLOWED_ORIGINS = sorted((_default_origins | _env_origins) - {""})
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], allow_credentials=True,
-    allow_methods=["*"], allow_headers=["*"],
+    allow_origins=ALLOWED_ORIGINS,   # важно: конкретни домейни, не "*"
+    allow_credentials=True,
+    allow_methods=["GET", "OPTIONS"],
+    allow_headers=["*"],
 )
 
 # --- Помощни функции ---
@@ -72,9 +87,12 @@ def seen_in_older(app_id: str, older_sets: List[Dict[str, Dict[str, Any]]]) -> b
 @app.get("/meta")
 def meta():
     with connect() as con:
-        countries = [r["country"] for r in con.execute("SELECT DISTINCT country FROM charts ORDER BY country").fetchall()]
-        categories = [r["category"] for r in con.execute("SELECT DISTINCT category FROM charts ORDER BY category").fetchall()]
-        subcategories = [r["subcategory"] for r in con.execute("SELECT DISTINCT subcategory FROM charts WHERE subcategory IS NOT NULL ORDER BY subcategory").fetchall()]
+        countries = [r["country"] for r in con.execute(
+            "SELECT DISTINCT country FROM charts ORDER BY country").fetchall()]
+        categories = [r["category"] for r in con.execute(
+            "SELECT DISTINCT category FROM charts ORDER BY category").fetchall()]
+        subcategories = [r["subcategory"] for r in con.execute(
+            "SELECT DISTINCT subcategory FROM charts WHERE subcategory IS NOT NULL ORDER BY subcategory").fetchall()]
     return {"countries": countries, "categories": categories, "subcategories": subcategories}
 
 # --- /compare7 endpoint ---
