@@ -1,62 +1,40 @@
-version: "1"
+name: Run App Store Scraper
 
-services:
-  - type: worker
-    name: appstore-scraper
-    env: python
-    buildCommand: pip install -r requirements.txt
-    startCommand: bash -lc "python gdrive_sync.py pull || true && python main.py && python gdrive_sync.py push"
-    plan: free
-    envVars:
-      - key: PYTHON_VERSION
-        value: 3.11.5
-      - key: DATA_PATH
-        value: /var/data/app_data.db
-      - key: GDRIVE_FOLDER_ID
-        sync: false
-      - key: GDRIVE_CREDENTIALS_JSON
-        sync: false
-    disk:
-      name: app_data
-      mountPath: /var/data
-      sizeGB: 1
-    branch: main
-    autoDeploy: true
-    repo: https://github.com/Tsvetemila/appstore-scraper1
+on:
+  workflow_dispatch:  # 👉 позволява ръчно стартиране
+  schedule:
+    - cron: "0 4 * * *"  # 🕐 автоматично всеки ден в 04:00 UTC (07:00 BG time)
 
-  - type: web
-    name: appstore-api
-    env: python
-    buildCommand: pip install -r requirements.txt
-    startCommand: bash -lc "python gdrive_sync.py pull && uvicorn main:app --host 0.0.0.0 --port 10000"
-    plan: free
-    envVars:
-      - key: PYTHON_VERSION
-        value: 3.11.5
-      - key: DATA_PATH
-        value: /var/data/app_data.db
-      - key: GDRIVE_FOLDER_ID
-        sync: false
-      - key: GDRIVE_CREDENTIALS_JSON
-        sync: false
-    disk:
-      name: app_data
-      mountPath: /var/data
-      sizeGB: 1
-    branch: main
-    autoDeploy: true
-    repo: https://github.com/Tsvetemila/appstore-scraper1
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
 
-schedules:
-  - name: upload-to-drive
-    type: cron
-    env: python
-    rootDir: appstore-api
-    schedule: "0 22 * * *"   # всеки ден в 22:00 UTC (~01:00 българско)
-    buildCommand: pip install -r requirements.txt
-    startCommand: python upload_to_drive.py
-    envVars:
-      - key: GDRIVE_FOLDER_ID
-        sync: false
-      - key: GDRIVE_CREDENTIALS_JSON
-        sync: false
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          cd appstore-api
+          pip install -r requirements.txt
+
+      - name: Run scraper
+        env:
+          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
+          GDRIVE_FOLDER_ID: ${{ secrets.GDRIVE_FOLDER_ID }}
+        run: |
+          cd appstore-api
+          python main.py
+
+      - name: Upload database to Google Drive
+        env:
+          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
+          GDRIVE_FOLDER_ID: ${{ secrets.GDRIVE_FOLDER_ID }}
+        run: |
+          cd appstore-api
+          python upload_to_drive.py
