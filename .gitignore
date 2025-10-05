@@ -16,3 +16,8 @@ build/
 # OS files
 .DS_Store
 Thumbs.db
+
+# Ignore Python virtual environments and logs
+appstore-api/.venv/
+appstore-api/logs/
+update_db.log
