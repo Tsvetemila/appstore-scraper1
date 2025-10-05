@@ -1,76 +1,40 @@
-name: Daily App Store Scrape
+version: "1"
 
-on:
-  workflow_dispatch:
-  schedule:
-    - cron: "0 5 * * *"   # всеки ден 05:00 UTC
-
-jobs:
-  scrape:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          if [ -f scraper/requirements.txt ]; then pip install -r scraper/requirements.txt; fi
-          pip install requests
-          pip install beautifulsoup4 lxml
-
-      # --- Новите скриптове ---
-      - name: Scrape APPS categories
-        run: python scraper/scraper_apps.py
-
-      - name: Scrape GAMES subcategories
-        run: python scraper/scraper_games.py
-
-      - name: Merge & Export CSV
-        run: python scraper/merge_results.py
-      # ------------------------
-
-      - name: Verify files exist
-        run: |
-          ls -lh appstore-api/data/ || true
-
-      - name: Upload database artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: app_data_db
-          path: appstore-api/data/app_data.db
-          if-no-files-found: error
-          retention-days: 14
-
-      - name: Upload CSV artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: charts_csv
-          path: appstore-api/data/charts_*.csv
-          if-no-files-found: error
-          retention-days: 14     
 services:
-      - type: web
-        name: appstore-api
-        env: python
-        plan: free
-        buildCommand: pip install -r requirements.txt
-        startCommand: uvicorn main:app --host 0.0.0.0 --port 10000
-        envVars:
-          - key: PYTHONUNBUFFERED
-            value: "true"
-        disk:
-          name: data
-          mountPath: /opt/render/project/src/data
-          sizeGB: 1
+  - type: worker
+    name: appstore-scraper
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: python main.py
+    plan: free
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.5
+      - key: DATA_PATH
+        value: /var/data/app_data.db
+    disk:
+      name: app_data
+      mountPath: /var/data
+      sizeGB: 1
+    branch: main
+    autoDeploy: true
+    repo: https://github.com/Tsvetemila/appstore-scraper1
 
-
-
+  - type: web
+    name: appstore-api
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port 10000
+    plan: free
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.5
+      - key: DATA_PATH
+        value: /var/data/app_data.db
+    disk:
+      name: app_data
+      mountPath: /var/data
+      sizeGB: 1
+    branch: main
+    autoDeploy: true
+    repo: https://github.com/Tsvetemila/appstore-scraper1
