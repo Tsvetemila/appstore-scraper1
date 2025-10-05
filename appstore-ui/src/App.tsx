@@ -22,7 +22,8 @@ type WeeklyRow = {
   developer_name: string;
 };
 
-const API = "http://127.0.0.1:8000";
+// ✅ Промяната е само тук:
+const API = "https://appstore-api.onrender.com";
 
 function StatusIcon({ row }: { row: CompareRow }) {
   switch (row.status) {
