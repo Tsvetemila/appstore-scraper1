@@ -26,3 +26,8 @@ build/
 # System
 .DS_Store
 Thumbs.db
+
+# Ignore SQLite databases
+*.db
+*.db-shm
+*.db-wal
