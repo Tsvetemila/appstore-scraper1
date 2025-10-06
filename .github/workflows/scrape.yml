@@ -1,9 +1,9 @@
-name: Run AppStore Scraper and Upload to Google Drive
+name: Run AppStore Scraper
 
 on:
   schedule:
-    - cron: "0 4 * * *" # всеки ден в 07:00 BG време (04:00 UTC)
-  workflow_dispatch:
+    - cron: "0 4 * * *" # Стартира всеки ден в 07:00 българско време (04:00 UTC)
+  workflow_dispatch: # Позволява ръчно стартиране
 
 jobs:
   run-scraper:
@@ -11,17 +11,18 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v3
 
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
-          python-version: "3.11"
+          python-version: '3.11'
 
       - name: Install dependencies
         run: |
+          cd appstore-api
           python -m pip install --upgrade pip
-          pip install -r appstore-api/requirements.txt
+          pip install -r requirements.txt
 
       - name: Run scraper
         run: |
@@ -30,10 +31,7 @@ jobs:
 
       - name: Upload database to Google Drive
         env:
-          GOOGLE_APPLICATION_CREDENTIALS_JSON: ${{ secrets.GOOGLE_CREDENTIALS }}
-          GOOGLE_DRIVE_FOLDER_ID: 15R7mtQqUfKs5Cz4JgBbw8ySYKx-AnRlF
+          GOOGLE_CREDS_JSON: ${{ secrets.GOOGLE_CREDS_JSON }}
         run: |
-          echo "$GOOGLE_APPLICATION_CREDENTIALS_JSON" > google_creds.json
           cd appstore-api
-          pip install google-api-python-client google-auth-httplib2 google-auth-oauthlib
-          python upload_to_drive.py --creds ../google_creds.json --folder-id $GOOGLE_DRIVE_FOLDER_ID
+          python upload_to_drive.py
