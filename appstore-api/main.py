@@ -4,17 +4,15 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from typing import Optional, List, Dict, Any
 from pathlib import Path
-import os, sqlite3, csv
+import os, sqlite3, csv, subprocess, sys
 from io import StringIO
 
 # --- Локализация на пътищата/базата -----------------------------------------
 APP_DIR = Path(__file__).resolve().parent
 
-# Позволяваме override през env var DB_PATH (напр. при Render/GitHub Actions),
-# но запазваме твоята оригинална структура като дефолт.
 _candidates: List[Optional[Path]] = [
     Path(os.getenv("DB_PATH")) if os.getenv("DB_PATH") else None,
-    APP_DIR / "data" / "app_data.db",        # оригиналното име от проекта
+    APP_DIR / "data" / "app_data.db",
     APP_DIR / "data" / "app_data.sqlite",
     APP_DIR / "data" / "app_data.sqlite3",
 ]
@@ -23,27 +21,20 @@ def _resolve_db_path() -> Path:
     for cand in _candidates:
         if cand and cand.exists():
             return cand
-    # ако не открием, връщаме дефолта (дори да не съществува),
-    # за да имаме стабилен път и по-ясно съобщение
-    return _candidates[1]  # APP_DIR/data/app_data.db
+    return _candidates[1]
 
 DB_PATH = _resolve_db_path()
 
 # -----------------------------------------------------------------------------
-
 app = FastAPI(title="AppStore Charts API", version="1.1")
 
-# --- CORS настройка (без промяна на логика) ----------------------------------
+# --- CORS --------------------------------------------------------------------
 _default_origins = {
-    "https://appstore-scraper1.vercel.app",  # продукция (фронтенд)
-    "http://localhost:5173",                 # локално (Vite)
+    "https://appstore-scraper1.vercel.app",
+    "http://localhost:5173",
     "http://127.0.0.1:5173",
 }
-_env_origins = {
-    o.strip()
-    for o in os.getenv("ALLOWED_ORIGINS", "").split(",")
-    if o.strip()
-}
+_env_origins = {o.strip() for o in os.getenv("ALLOWED_ORIGINS", "").split(",") if o.strip()}
 ALLOWED_ORIGINS = sorted((_default_origins | _env_origins) - {""})
 
 app.add_middleware(
@@ -56,16 +47,11 @@ app.add_middleware(
 
 # --- Помощни функции ----------------------------------------------------------
 def connect() -> sqlite3.Connection:
-    # По-ясно съобщение, ако базата липсва (не променя логиката на ендпойнтите)
     if not Path(DB_PATH).exists():
         tried = [str(c) for c in _candidates if c is not None]
         raise HTTPException(
             status_code=503,
-            detail={
-                "error": "Database file not found",
-                "tried_paths": tried,
-                "hint": "Set env DB_PATH or ensure data/app_data.db exists"
-            },
+            detail={"error": "Database file not found", "tried_paths": tried},
         )
     con = sqlite3.connect(str(DB_PATH))
     con.row_factory = sqlite3.Row
@@ -78,16 +64,10 @@ def latest_n_snapshot_dates(con: sqlite3.Connection, n: int = 8) -> List[str]:
     ).fetchall()
     return [r["snapshot_date"] for r in rows]
 
-def load_dimension_rows(
-    con: sqlite3.Connection,
-    snapshot_date: str,
-    country: Optional[str],
-    category: Optional[str],
-    subcategory: Optional[str],
-) -> Dict[str, Dict[str, Any]]:
+def load_dimension_rows(con: sqlite3.Connection, snapshot_date: str, country: Optional[str],
+                        category: Optional[str], subcategory: Optional[str]) -> Dict[str, Dict[str, Any]]:
     where = ["snapshot_date = ?", "chart_type = 'top_free'"]
     params: List[Any] = [snapshot_date]
-
     if country:
         where.append("country = ?")
         params.append(country.upper())
@@ -120,45 +100,26 @@ def seen_in_older(app_id: str, older_sets: List[Dict[str, Dict[str, Any]]]) -> b
 @app.get("/meta")
 def meta():
     with connect() as con:
-        countries = [
-            r["country"]
-            for r in con.execute(
-                "SELECT DISTINCT country FROM charts ORDER BY country"
-            ).fetchall()
-        ]
-        categories = [
-            r["category"]
-            for r in con.execute(
-                "SELECT DISTINCT category FROM charts ORDER BY category"
-            ).fetchall()
-        ]
-        subcategories = [
-            r["subcategory"]
-            for r in con.execute(
-                "SELECT DISTINCT subcategory FROM charts WHERE subcategory IS NOT NULL ORDER BY subcategory"
-            ).fetchall()
-        ]
+        countries = [r["country"] for r in con.execute("SELECT DISTINCT country FROM charts ORDER BY country")]
+        categories = [r["category"] for r in con.execute("SELECT DISTINCT category FROM charts ORDER BY category")]
+        subcategories = [r["subcategory"] for r in con.execute(
+            "SELECT DISTINCT subcategory FROM charts WHERE subcategory IS NOT NULL ORDER BY subcategory"
+        )]
     return {"countries": countries, "categories": categories, "subcategories": subcategories}
 
 # --- /compare7 endpoint -------------------------------------------------------
 @app.get("/compare7")
-def compare7(
-    country: Optional[str] = Query(None),
-    category: Optional[str] = Query(None),
-    subcategory: Optional[str] = Query(None),
-    limit: int = Query(50, ge=1, le=200),
-):
+def compare7(country: Optional[str] = Query(None),
+             category: Optional[str] = Query(None),
+             subcategory: Optional[str] = Query(None),
+             limit: int = Query(50, ge=1, le=200)):
     if country and country.lower() == "all":
         country = None
     if category and category.lower() == "all":
         category = None
     if subcategory and subcategory.lower() == "all":
         subcategory = None
-
-    if (subcategory is None) and (category and category != "Games"):
-        subcat_filter = ""
-    else:
-        subcat_filter = subcategory
+    subcat_filter = "" if (subcategory is None and category and category != "Games") else subcategory
 
     with connect() as con:
         dates = latest_n_snapshot_dates(con, 8)
@@ -167,16 +128,12 @@ def compare7(
 
         snapN, snapPrev = dates[0], dates[1]
         older_dates = dates[2:]
-
         cur_map = load_dimension_rows(con, snapN, country, category, subcat_filter)
         prev_map = load_dimension_rows(con, snapPrev, country, category, subcat_filter)
-        older_maps = [
-            load_dimension_rows(con, d, country, category, subcat_filter) for d in older_dates
-        ]
+        older_maps = [load_dimension_rows(con, d, country, category, subcat_filter) for d in older_dates]
 
         all_ids = set(cur_map.keys()) | set(prev_map.keys())
         results = []
-
         for app_id in all_ids:
             cur = cur_map.get(app_id)
             prev = prev_map.get(app_id)
@@ -191,7 +148,6 @@ def compare7(
                 "delta": None,
                 "status": "IN_TOP",
             }
-
             if cur and prev:
                 delta = prev["rank"] - cur["rank"]
                 row["delta"] = delta
@@ -203,39 +159,26 @@ def compare7(
                 row["status"] = "DROPOUT"
             results.append(row)
 
-        results.sort(
-            key=lambda r: (
-                r["current_rank"] if r["current_rank"] is not None else 10**9,
-                r["previous_rank"] if r["previous_rank"] is not None else 10**9,
-            )
-        )
-
+        results.sort(key=lambda r: (
+            r["current_rank"] if r["current_rank"] is not None else 10**9,
+            r["previous_rank"] if r["previous_rank"] is not None else 10**9,
+        ))
         if limit:
             results = results[:limit]
-
         return {"snapshot": snapN, "previous_snapshot": snapPrev, "results": results}
 
 # --- /reports/weekly endpoint -------------------------------------------------
 @app.get("/reports/weekly")
-def weekly_report(
-    country: Optional[str] = Query(None),
-    category: Optional[str] = Query(None),
-    subcategory: Optional[str] = Query(None),
-    # само това е променено: regex -> pattern (де-прекацията в логовете)
-    format: str = Query("json", pattern="^(json|csv)$"),
-):
-    """
-    Връща NEW и DROPOUT приложения спрямо последните 7 snapshot-а:
-      NEW = не е присъствало в никой от N-1..N-7
-      DROPOUT = присъствало е в поне един от N-1..N-7, но липсва в N
-    """
+def weekly_report(country: Optional[str] = Query(None),
+                  category: Optional[str] = Query(None),
+                  subcategory: Optional[str] = Query(None),
+                  format: str = Query("json", pattern="^(json|csv)$")):
     if country and country.lower() == "all":
         country = None
     if category and category.lower() == "all":
         category = None
     if subcategory and subcategory.lower() == "all":
         subcategory = None
-
     subcat_filter = "" if (subcategory is None and category and category != "Games") else subcategory
 
     with connect() as con:
@@ -244,8 +187,7 @@ def weekly_report(
             return {"message": "Not enough snapshots."}
 
         snapN = dates[0]
-        older_dates = dates[1:]  # N-1 … N-7
-
+        older_dates = dates[1:]
         cur_map = load_dimension_rows(con, snapN, country, category, subcat_filter)
         older_maps = [load_dimension_rows(con, d, country, category, subcat_filter) for d in older_dates]
 
@@ -254,46 +196,53 @@ def weekly_report(
             prev_union.update(m)
 
         new_apps, dropouts = [], []
-
         for app_id, cur in cur_map.items():
             seen_before = any(app_id in om for om in older_maps)
             if not seen_before:
                 new_apps.append(cur)
-
         prev_ids = set(prev_union.keys())
         drop_ids = [pid for pid in prev_ids if pid not in cur_map]
         for pid in drop_ids:
             dropouts.append(prev_union[pid])
 
-        result = {
-            "snapshot": snapN,
-            "compared_snapshots": older_dates,
-            "country": country or "All",
-            "category": category or "All",
-            "subcategory": subcategory or "All",
-            "count_new": len(new_apps),
-            "count_dropped": len(dropouts),
-            "new": new_apps,
-            "dropped": dropouts,
-        }
+        result = {"snapshot": snapN, "compared_snapshots": older_dates,
+                  "country": country or "All", "category": category or "All",
+                  "subcategory": subcategory or "All",
+                  "count_new": len(new_apps), "count_dropped": len(dropouts),
+                  "new": new_apps, "dropped": dropouts}
 
         if format == "csv":
             output = StringIO()
             writer = csv.writer(output)
             writer.writerow(
-                ["status", "country", "category", "subcategory", "rank", "app_id", "app_name", "developer_name"]
-            )
+                ["status","country","category","subcategory","rank","app_id","app_name","developer_name"])
             for a in new_apps:
-                writer.writerow(["NEW", a["country"], a["category"], a["subcategory"], a["rank"], a["app_id"], a["app_name"], a["developer_name"]])
+                writer.writerow(["NEW", a["country"], a["category"], a["subcategory"],
+                                 a["rank"], a["app_id"], a["app_name"], a["developer_name"]])
             for a in dropouts:
-                writer.writerow(["DROPOUT", a["country"], a["category"], a["subcategory"], a["rank"], a["app_id"], a["app_name"], a["developer_name"]])
+                writer.writerow(["DROPOUT", a["country"], a["category"], a["subcategory"],
+                                 a["rank"], a["app_id"], a["app_name"], a["developer_name"]])
             output.seek(0)
             headers = {"Content-Disposition": f"attachment; filename=weekly_report_{snapN}.csv"}
             return StreamingResponse(output, media_type="text/csv", headers=headers)
-
         return JSONResponse(result)
 
-# --- Health/Root --------------------------------------------------------------
+# --- Health -------------------------------------------------------------------
 @app.get("/")
 def root():
     return {"status": "ok", "message": "AppStore Charts API running"}
+
+# --- SCRAPER trigger ----------------------------------------------------------
+@app.get("/run-scraper")
+def run_scraper():
+    """Ръчно стартира двата скрейпа и merge_results.py."""
+    try:
+        scripts = ["scraper_apps.py", "scraper_games.py", "merge_results.py"]
+        results = []
+        for s in scripts:
+            print(f"🚀 Running {s} ...")
+            proc = subprocess.run([sys.executable, s], cwd=APP_DIR, capture_output=True, text=True)
+            results.append({"script": s, "returncode": proc.returncode, "stdout": proc.stdout, "stderr": proc.stderr})
+        return {"status": "done", "results": results}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
