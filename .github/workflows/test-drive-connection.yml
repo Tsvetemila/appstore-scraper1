@@ -1,0 +1,56 @@
+name: Test Google Drive Connection
+
+on:
+  workflow_dispatch:  # ръчно стартиране от Actions
+
+jobs:
+  test-drive:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Google API client
+        run: |
+          pip install google-api-python-client google-auth-httplib2 google-auth-oauthlib
+
+      - name: Verify Google Drive access
+        env:
+          GOOGLE_CREDENTIALS_JSON: ${{ secrets.GOOGLE_CREDENTIALS_JSON }}
+          GOOGLE_DRIVE_FOLDER_ID: ${{ secrets.GOOGLE_DRIVE_FOLDER_ID }}
+        run: |
+          echo "🔍 Checking Google Drive connection..."
+          python <<'PYCODE'
+import os, json
+from google.oauth2 import service_account
+from googleapiclient.discovery import build
+from googleapiclient.errors import HttpError
+
+creds_json = os.getenv("GOOGLE_CREDENTIALS_JSON")
+folder_id = os.getenv("GOOGLE_DRIVE_FOLDER_ID")
+
+if not creds_json:
+    raise SystemExit("❌ GOOGLE_CREDENTIALS_JSON secret is missing.")
+if not folder_id:
+    raise SystemExit("❌ GOOGLE_DRIVE_FOLDER_ID secret is missing.")
+
+creds = service_account.Credentials.from_service_account_info(json.loads(creds_json))
+drive = build("drive", "v3", credentials=creds)
+
+try:
+    folder = drive.files().get(fileId=folder_id, fields="id, name").execute()
+    print(f"✅ Successfully connected! Folder found: {folder['name']} (ID: {folder['id']})")
+except HttpError as e:
+    if e.resp.status == 404:
+        print(f"❌ Folder not found (ID: {folder_id}). Check permissions or ID.")
+    elif e.resp.status == 403:
+        print("❌ Permission denied. The service account may not have access to the folder.")
+    else:
+        print(f"❌ Google API error: {e}")
+PYCODE
