@@ -4,31 +4,29 @@ from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 
-# 🔹 Взимаме JSON съдържанието от GitHub Secret (GOOGLE_CREDENTIALS)
-google_creds_json = os.environ.get("GOOGLE_CREDENTIALS")
+# Вземи JSON от секретната променлива (GOOGLE_CREDS_JSON)
+creds_json = os.getenv("GOOGLE_CREDS_JSON")
 
-if not google_creds_json:
-    raise ValueError("❌ Missing GOOGLE_CREDENTIALS environment variable.")
+if not creds_json:
+    raise Exception("GOOGLE_CREDS_JSON environment variable not found")
 
-# 🔹 Парсваме JSON съдържанието
-creds_dict = json.loads(google_creds_json)
+# Запиши го като временен файл
+creds_path = "/tmp/google_creds.json"
+with open(creds_path, "w") as f:
+    f.write(creds_json)
 
-# 🔹 Настройваме Google Drive API
-SCOPES = ['https://www.googleapis.com/auth/drive.file']
-credentials = service_account.Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
+# Създай credentials обект
+credentials = service_account.Credentials.from_service_account_file(creds_path)
 service = build('drive', 'v3', credentials=credentials)
 
-# 🔹 Път до базата
-file_path = '/data/app_data'
-file_metadata = {'name': 'app_data.sqlite'}
-media = MediaFileUpload(file_path, mimetype='application/octet-stream')
+# Определи файла за качване
+file_path = "data/app_data.sqlite"
+file_metadata = {
+    "name": "app_data.sqlite",
+    "parents": ["15R7mtQqUfKs5Cz4JgBbw8ySYKx-AnRlF"]  # ID на твоята Google Drive папка
+}
 
-# 🔹 Проверяваме дали вече има файл с това име
-files = service.files().list(q="name='app_data.sqlite'", fields="files(id)").execute().get('files', [])
-if files:
-    file_id = files[0]['id']
-    service.files().update(fileId=file_id, media_body=media).execute()
-    print("✅ Updated existing app_data.sqlite on Google Drive")
-else:
-    service.files().create(body=file_metadata, media_body=media, fields='id').execute()
-    print("✅ Uploaded new app_data.sqlite to Google Drive")
+media = MediaFileUpload(file_path, resumable=True)
+file = service.files().create(body=file_metadata, media_body=media, fields="id").execute()
+
+print(f"✅ Uploaded {file_path} to Google Drive (file ID: {file.get('id')})")
