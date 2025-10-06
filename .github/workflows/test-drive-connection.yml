@@ -20,14 +20,14 @@ jobs:
         run: |
           pip install google-api-python-client google-auth-httplib2 google-auth-oauthlib
 
-      - name: Verify Google Drive access
+            - name: Verify Google Drive access
         env:
           GOOGLE_CREDENTIALS_JSON: ${{ secrets.GOOGLE_CREDENTIALS_JSON }}
           GOOGLE_DRIVE_FOLDER_ID: ${{ secrets.GOOGLE_DRIVE_FOLDER_ID }}
         shell: bash
         run: |
           echo "🔍 Checking Google Drive connection..."
-          cat > check_drive.py <<'EOF'
+          cat > check_drive.py <<EOF
 import os, json
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
