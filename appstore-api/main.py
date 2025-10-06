@@ -7,6 +7,57 @@ from pathlib import Path
 import os, sqlite3, csv, subprocess, sys
 from io import StringIO
 
+# --- Добавено: автоматично сваляне на базата от Google Drive при стартиране ---
+import io, json
+from google.oauth2 import service_account
+from googleapiclient.discovery import build
+from googleapiclient.http import MediaIoBaseDownload
+
+def ensure_database_from_drive():
+    local_path = "appstore-api/data/app_data.db"
+    creds_json = os.getenv("GOOGLE_CREDS_JSON")
+    folder_id = os.getenv("GOOGLE_DRIVE_FOLDER_ID")
+
+    if os.path.exists(local_path):
+        print("✅ Database already exists locally.")
+        return
+
+    if not creds_json or not folder_id:
+        print("⚠️ Missing Google Drive credentials. Skipping DB download.")
+        return
+
+    print("⬇️ Database not found — downloading latest from Google Drive...")
+
+    try:
+        creds = service_account.Credentials.from_service_account_info(json.loads(creds_json))
+        drive = build("drive", "v3", credentials=creds)
+        query = f"'{folder_id}' in parents and name = 'app_data.db' and trashed = false"
+        results = drive.files().list(q=query, fields="files(id, name, modifiedTime)").execute()
+        files = results.get("files", [])
+
+        if not files:
+            print("⚠️ No app_data.db found in Drive folder.")
+            return
+
+        file_id = files[0]["id"]
+        request = drive.files().get_media(fileId=file_id)
+        os.makedirs(os.path.dirname(local_path), exist_ok=True)
+
+        with io.FileIO(local_path, "wb") as f:
+            downloader = MediaIoBaseDownload(f, request)
+            done = False
+            while not done:
+                status, done = downloader.next_chunk()
+                print(f"⬇️ Download progress: {int(status.progress() * 100)}%")
+
+        print(f"✅ Database downloaded to {local_path}")
+
+    except Exception as e:
+        print(f"❌ Error downloading database: {e}")
+
+# Извиква се веднага при стартиране на приложението (например в Render)
+ensure_database_from_drive()
+
 # --- Локализация на пътищата/базата -----------------------------------------
 APP_DIR = Path(__file__).resolve().parent
 
@@ -31,6 +82,7 @@ app = FastAPI(title="AppStore Charts API", version="1.1")
 # --- CORS --------------------------------------------------------------------
 _default_origins = {
     "https://appstore-scraper1.vercel.app",
+    "https://appstore-scraper1-git-main-tsvetemilias-projects.vercel.app",  # 👈 добавен Vercel домейн
     "http://localhost:5173",
     "http://127.0.0.1:5173",
 }
