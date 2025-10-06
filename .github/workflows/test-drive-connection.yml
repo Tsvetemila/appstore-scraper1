@@ -1,7 +1,7 @@
 name: Test Google Drive Connection
 
 on:
-  workflow_dispatch:  # ръчно стартиране от Actions
+  workflow_dispatch:
 
 jobs:
   test-drive:
@@ -24,9 +24,10 @@ jobs:
         env:
           GOOGLE_CREDENTIALS_JSON: ${{ secrets.GOOGLE_CREDENTIALS_JSON }}
           GOOGLE_DRIVE_FOLDER_ID: ${{ secrets.GOOGLE_DRIVE_FOLDER_ID }}
+        shell: bash
         run: |
           echo "🔍 Checking Google Drive connection..."
-          python <<'PYCODE'
+          cat > check_drive.py <<'EOF'
 import os, json
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
@@ -53,4 +54,5 @@ except HttpError as e:
         print("❌ Permission denied. The service account may not have access to the folder.")
     else:
         print(f"❌ Google API error: {e}")
-PYCODE
+EOF
+          python check_drive.py
