@@ -20,7 +20,7 @@ credentials = service_account.Credentials.from_service_account_file(creds_path)
 service = build('drive', 'v3', credentials=credentials)
 
 # Определи файла за качване
-file_path = "data/app_data.sqlite"
+file_path = "appstore-api/data/app_data"
 file_metadata = {
     "name": "app_data.sqlite",
     "parents": ["15R7mtQqUfKs5Cz4JgBbw8ySYKx-AnRlF"]  # ID на твоята Google Drive папка
