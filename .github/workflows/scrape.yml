@@ -1,22 +1,17 @@
-name: run-scraper
+name: Run AppStore Scraper
 
 on:
+  workflow_dispatch:        # позволява ръчно стартиране от GitHub
   schedule:
-    # 06:00 BG време през ЛЕТНО време (UTC+3)
-    - cron: "0 3 * * *"
-    # 06:00 BG време през ЗИМНО време (UTC+2)
-    - cron: "0 4 * * *"
-  # ръчно пускане от Actions таба
-  workflow_dispatch:
+    - cron: "0 4 * * *"     # всеки ден в 05:00 UTC (~08:00 българско време)
 
 jobs:
   run-scraper:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 40
 
     steps:
-      # --- Оставяме checkout и setup без промяна ---
-      - name: Checkout
+      - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Set up Python
@@ -26,18 +21,34 @@ jobs:
 
       - name: Install dependencies
         run: |
-          python -m pip install --upgrade pip
-          pip install -r appstore-api/requirements.txt
-          # нужните пакети за Google Drive upload
-          pip install google-api-python-client google-auth google-auth-httplib2 google-auth-oauthlib
+          pip install -r requirements.txt || echo "no requirements.txt found"
+          pip install beautifulsoup4 requests lxml google-auth-oauthlib google-api-python-client
 
-      # --- Тук стартирай скрейпа както е при теб (ако е различно, смени командата) ---
-      - name: Run scraper
-        run: python appstore-api/main.py
+      # --- СКРЕЙП Apps категории ---
+      - name: Run Apps Scraper
+        run: python scraper/scraper_apps.py
 
-      # --- ДОБАВЕНО: Upload на базата към Google Drive ---
+      # --- СКРЕЙП Games подкатегории ---
+      - name: Run Games Scraper
+        run: python scraper/scraper_games.py
+
+      # --- Обединяване и експортиране на CSV ---
+      - name: Merge Results
+        run: python scraper/merge_results.py
+
+      # --- Качване в Google Drive (ако файлът съществува) ---
       - name: Upload database to Google Drive
         env:
-          GOOGLE_CREDS_JSON: ${{ secrets.GOOGLE_CREDS_JSON }}
           GOOGLE_DRIVE_FOLDER_ID: ${{ secrets.GOOGLE_DRIVE_FOLDER_ID }}
-        run: python appstore-api/upload_to_drive.py
+          GOOGLE_CREDENTIALS_JSON: ${{ secrets.GOOGLE_CREDENTIALS_JSON }}
+        run: |
+          if [ -f "utils/upload_to_drive.py" ]; then
+            echo "Uploading database to Google Drive..."
+            python utils/upload_to_drive.py
+          else
+            echo "⚠️ upload_to_drive.py not found — skipping Google upload."
+          fi
+
+      # --- Потвърждение ---
+      - name: Finish
+        run: echo "✅ Scraper run completed successfully!"
