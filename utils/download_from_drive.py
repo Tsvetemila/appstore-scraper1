@@ -6,7 +6,7 @@ from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload
 
 def main():
-    creds_json = os.getenv("GOOGLE_CREDENTIALS_JSON")
+    creds_json = os.getenv("GOOGLE_CREDS_JSON")
     folder_id = os.getenv("GOOGLE_DRIVE_FOLDER_ID")
     local_path = "appstore-api/data/app_data.db"
 
