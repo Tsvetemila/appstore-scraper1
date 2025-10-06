@@ -31,10 +31,11 @@ jobs:
           cd appstore-api
           python main.py
 
-      - name: Upload database to Google Drive
+       - name: Upload database to Google Drive
         env:
-          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
-          GDRIVE_FOLDER_ID: ${{ secrets.GDRIVE_FOLDER_ID }}
+          GOOGLE_CREDS_JSON: ${{ secrets.GOOGLE_CREDS_JSON }}
         run: |
           cd appstore-api
+          echo "$GOOGLE_CREDS_JSON" > google_creds.json
           python upload_to_drive.py
+
