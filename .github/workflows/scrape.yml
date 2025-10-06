@@ -24,6 +24,14 @@ jobs:
           pip install -r requirements.txt || echo "no requirements.txt found"
           pip install beautifulsoup4 requests lxml google-auth-oauthlib google-api-python-client
 
+      - name: Download latest database from Google Drive
+        env:
+          GOOGLE_DRIVE_FOLDER_ID: ${{ secrets.GOOGLE_DRIVE_FOLDER_ID }}
+          GOOGLE_CREDS_JSON: ${{ secrets.GOOGLE_CREDS_JSON }}
+        run: |
+          echo "Downloading latest app_data.db from Drive..."
+          python utils/download_from_drive.py
+
       # --- СКРЕЙП Apps категории ---
       - name: Run Apps Scraper
         run: python scraper/scraper_apps.py
@@ -40,7 +48,7 @@ jobs:
       - name: Upload database to Google Drive
         env:
           GOOGLE_DRIVE_FOLDER_ID: ${{ secrets.GOOGLE_DRIVE_FOLDER_ID }}
-          GOOGLE_CREDENTIALS_JSON: ${{ secrets.GOOGLE_CREDENTIALS_JSON }}
+          GOOGLE_CREDS_JSON: ${{ secrets.GOOGLE_CREDS_JSON }}
         run: |
           if [ -f "utils/upload_to_drive.py" ]; then
             echo "Uploading database to Google Drive..."
