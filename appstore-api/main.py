@@ -119,7 +119,88 @@ def _inspect_database_quick(db_path: str):
 # извикваме проверката веднага след като имаме DB_PATH
 _inspect_database_quick(str(DB_PATH))
 
+ensure_tables_exist(str(DB_PATH))
+
+
+# --- Създаване/осигуряване на таблици в базата -------------------------------
+import sqlite3
+
+def ensure_tables_exist(db_path: str):
+    """
+    Проверява кои таблици ги има и създава липсващите.
+    Няма ефект, ако вече съществуват (ползваме IF NOT EXISTS).
+    """
+    try:
+        print("🧩 Checking database structure...")
+        con = sqlite3.connect(db_path)
+        cur = con.cursor()
+
+        # Кои таблици съществуват в момента?
+        cur.execute("SELECT name FROM sqlite_master WHERE type='table'")
+        existing = {r[0] for r in cur.fetchall()}
+
+        required = {
+            "apps": """
+                CREATE TABLE IF NOT EXISTS apps (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    app_id TEXT,
+                    name TEXT,
+                    developer TEXT,
+                    price TEXT,
+                    url TEXT
+                );
+            """,
+            "charts": """
+                CREATE TABLE IF NOT EXISTS charts (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    snapshot_date TEXT,
+                    country TEXT,
+                    chart_type TEXT,
+                    category TEXT,
+                    subcategory TEXT,
+                    rank INTEGER,
+                    app_id TEXT,
+                    app_name TEXT,
+                    developer TEXT
+                );
+            """,
+            "snapshots": """
+                CREATE TABLE IF NOT EXISTS snapshots (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    snapshot_date TEXT,
+                    country TEXT,
+                    category TEXT,
+                    subcategory TEXT,
+                    data TEXT
+                );
+            """,
+            "compare_results": """
+                CREATE TABLE IF NOT EXISTS compare_results (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    country TEXT,
+                    category TEXT,
+                    subcategory TEXT,
+                    new_entries TEXT,
+                    dropped_entries TEXT,
+                    date_generated TEXT
+                );
+            """
+        }
+
+        # Създаваме липсващите
+        for name, ddl in required.items():
+            if name not in existing:
+                print(f"⚙️ Creating missing table: {name}")
+                cur.execute(ddl)
+
+        con.commit()
+        con.close()
+        print("✅ Database structure verified.")
+    except Exception as e:
+        print(f"❌ Error ensuring tables: {e}")
+
 # -----------------------------------------------------------------------------
+
 app = FastAPI(title="AppStore Charts API", version="1.1")
 
 # --- CORS --------------------------------------------------------------------
@@ -153,7 +234,24 @@ def connect() -> sqlite3.Connection:
     return con
 
 # (тук нататък логиката ти за /meta, /compare7, /weekly, /run-scraper и т.н. остава без промени)
+---------------------------------------------------------------------------
 
 @app.get("/meta")
 def get_meta():
     return {"status": "ok", "message": "API connected and DB ready"}
+------------------------------------------------------------------------
+@app.get("/debug/db-tables")
+def debug_db_tables():
+    con = connect()
+    cur = con.cursor()
+    cur.execute("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
+    tables = [r[0] for r in cur.fetchall()]
+    out = {"tables": tables}
+    # бърза отметка дали имаме данни
+    for t in ("apps", "charts", "snapshots", "compare_results"):
+        if t in tables:
+            cur.execute(f"SELECT COUNT(1) FROM {t}")
+            out[f"{t}_rows"] = cur.fetchone()[0]
+    con.close()
+    return out
+
