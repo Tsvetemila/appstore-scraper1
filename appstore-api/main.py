@@ -143,6 +143,8 @@ APP_DIR = Path(__file__).resolve().parent
 _candidates: List[Optional[Path]] = [
     Path(os.getenv("DB_PATH")) if os.getenv("DB_PATH") else None,
     APP_DIR / "data" / "app_data.db",
+    APP_DIR / "appstore-api" / "data" / "app_data.db",  # ✅ добавен fallback
+    APP_DIR.parent / "data" / "app_data.db",            # ✅ fallback към горната папка
     APP_DIR / "data" / "app_data.sqlite",
     APP_DIR / "data" / "app_data.sqlite3",
 ]
