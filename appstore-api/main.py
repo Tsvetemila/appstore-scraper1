@@ -68,7 +68,7 @@ def ensure_database_from_drive():
 ensure_database_from_drive()
 
 # --- Локализация на пътищата/базата -----------------------------------------
-APP_DIR = Path(__file__).resolve().parent
+APP_DIR = Path(__file__).resolve().parent.parent
 
 _candidates: List[Optional[Path]] = [
     Path(os.getenv("DB_PATH")) if os.getenv("DB_PATH") else None,
