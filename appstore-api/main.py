@@ -53,7 +53,6 @@ def ensure_database_from_drive():
 
         print(f"✅ Database downloaded to {local_path}")
 
-        # --- 🆕 Добавена проверка и лог ---
         abs_path = os.path.abspath(local_path)
         if os.path.exists(local_path):
             size_mb = os.path.getsize(local_path) / (1024 * 1024)
@@ -88,13 +87,45 @@ def _resolve_db_path() -> Path:
 
 DB_PATH = _resolve_db_path()
 
+# --- БЪРЗА ДИАГНОСТИКА НА БАЗАТА (таблици, пътища) ---------------------------
+def _inspect_database_quick(db_path: str):
+    """Лека проверка (без тежки COUNT()), за да видим какво вижда SQLite."""
+    import sqlite3, os
+    try:
+        abs_path = os.path.abspath(db_path)
+        print(f"🧭 Resolved DB_PATH: {abs_path}")
+        print("🔎 DB candidates:", [str(c) for c in _candidates if c is not None])
+
+        if not os.path.exists(db_path):
+            print(f"❌ Resolved DB path does not exist on disk: {abs_path}")
+            return
+
+        with sqlite3.connect(db_path) as con:
+            cur = con.cursor()
+            tables = [r[0] for r in cur.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name;"
+            )]
+            print(f"📋 Tables in database: {tables}")
+
+            # Бърза проверка дали има редове в ключовите таблици
+            for t in ("apps", "charts", "snapshots"):
+                if t in tables:
+                    cur.execute(f"SELECT 1 FROM {t} LIMIT 1;")
+                    has_row = cur.fetchone() is not None
+                    print(f"   • {t}: {'has data' if has_row else 'empty'}")
+    except Exception as e:
+        print(f"❌ Error inspecting DB: {e}")
+
+# извикваме проверката веднага след като имаме DB_PATH
+_inspect_database_quick(str(DB_PATH))
+
 # -----------------------------------------------------------------------------
 app = FastAPI(title="AppStore Charts API", version="1.1")
 
 # --- CORS --------------------------------------------------------------------
 _default_origins = {
     "https://appstore-scraper1.vercel.app",
-    "https://appstore-scraper1-git-main-tsvetemilias-projects.vercel.app",  # 👈 добавен Vercel домейн
+    "https://appstore-scraper1-git-main-tsvetemilias-projects.vercel.app",
     "http://localhost:5173",
     "http://127.0.0.1:5173",
 }
@@ -121,4 +152,4 @@ def connect() -> sqlite3.Connection:
     con.row_factory = sqlite3.Row
     return con
 
-# (останалата логика остава без промени — compare7, meta, reports, run-scraper и т.н.)
+# (тук нататък логиката ти за /meta, /compare7, /weekly, /run-scraper и т.н. остава без промени)
