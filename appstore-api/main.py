@@ -187,6 +187,20 @@ def _inspect_database_quick(db_path: str):
         print(f"❌ Error inspecting DB: {e}")
 
 
+# --- Auto-correct for nested directory structures on Render ---
+if not DB_PATH.exists():
+    import glob
+    print(f"⚠️ [DB FIX] DB not found at {DB_PATH}, searching deeper...")
+    matches = glob.glob("**/app_data.db", recursive=True)
+    if matches:
+        new_path = Path(matches[0]).resolve()
+        print(f"✅ [DB FIX] Found DB at {new_path}")
+        DB_PATH = new_path
+    else:
+        print("❌ [DB FIX] No DB file found anywhere in project directories.")
+
+
+
 # --- Стартиране на проверките -----------------------------------------------
 _inspect_database_quick(str(DB_PATH))
 ensure_tables_exist(str(DB_PATH))
