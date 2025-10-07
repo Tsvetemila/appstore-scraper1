@@ -72,7 +72,6 @@ def ensure_tables_exist(db_path: str):
         con = sqlite3.connect(db_path)
         cur = con.cursor()
 
-        # Кои таблици съществуват в момента?
         cur.execute("SELECT name FROM sqlite_master WHERE type='table'")
         existing = {r[0] for r in cur.fetchall()}
 
@@ -143,8 +142,8 @@ APP_DIR = Path(__file__).resolve().parent
 _candidates: List[Optional[Path]] = [
     Path(os.getenv("DB_PATH")) if os.getenv("DB_PATH") else None,
     APP_DIR / "data" / "app_data.db",
-    APP_DIR / "appstore-api" / "data" / "app_data.db",  # ✅ добавен fallback
-    APP_DIR.parent / "data" / "app_data.db",            # ✅ fallback към горната папка
+    APP_DIR / "appstore-api" / "data" / "app_data.db",
+    APP_DIR.parent / "data" / "app_data.db",
     APP_DIR / "data" / "app_data.sqlite",
     APP_DIR / "data" / "app_data.sqlite3",
 ]
@@ -160,33 +159,6 @@ def _resolve_db_path() -> Path:
 DB_PATH = _resolve_db_path()
 
 
-def _inspect_database_quick(db_path: str):
-    """Лека проверка какво вижда SQLite."""
-    try:
-        abs_path = os.path.abspath(db_path)
-        print(f"🧭 Resolved DB_PATH: {abs_path}")
-        print("🔎 DB candidates:", [str(c) for c in _candidates if c is not None])
-
-        if not os.path.exists(db_path):
-            print(f"❌ Resolved DB path does not exist on disk: {abs_path}")
-            return
-
-        with sqlite3.connect(db_path) as con:
-            cur = con.cursor()
-            tables = [r[0] for r in cur.execute(
-                "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name;"
-            )]
-            print(f"📋 Tables in database: {tables}")
-
-            for t in ("apps", "charts", "snapshots"):
-                if t in tables:
-                    cur.execute(f"SELECT 1 FROM {t} LIMIT 1;")
-                    has_row = cur.fetchone() is not None
-                    print(f"   • {t}: {'has data' if has_row else 'empty'}")
-    except Exception as e:
-        print(f"❌ Error inspecting DB: {e}")
-
-
 # --- Auto-correct for nested directory structures on Render ---
 if not DB_PATH.exists():
     import glob
@@ -200,9 +172,7 @@ if not DB_PATH.exists():
         print("❌ [DB FIX] No DB file found anywhere in project directories.")
 
 
-
 # --- Стартиране на проверките -----------------------------------------------
-_inspect_database_quick(str(DB_PATH))
 ensure_tables_exist(str(DB_PATH))
 
 
@@ -239,9 +209,16 @@ def connect() -> sqlite3.Connection:
     return con
 
 
+# --- СЪЩЕСТВУВАЩИ ЕНДПОЙНТИ -------------------------------------------------
 @app.get("/meta")
 def get_meta():
-    return {"status": "ok", "message": "API connected and DB ready"}
+    size_mb = os.path.getsize(DB_PATH) / (1024 * 1024) if os.path.exists(DB_PATH) else 0
+    return {
+        "status": "ok",
+        "message": "API connected and DB ready",
+        "db_path": str(DB_PATH),
+        "db_size_mb": round(size_mb, 2)
+    }
 
 
 @app.get("/debug/db-tables")
@@ -257,3 +234,95 @@ def debug_db_tables():
             out[f"{t}_rows"] = cur.fetchone()[0]
     con.close()
     return out
+
+
+# --- НОВИ РУТОВЕ ЗА ФРОНТЕНДА ------------------------------------------------
+from datetime import datetime, timedelta
+
+@app.get("/charts")
+def charts(country: str = Query("US"), chart_type: str = Query("top_free"), limit: int = Query(50)):
+    """Връща последните данни за избрана държава"""
+    con = connect()
+    cur = con.cursor()
+    cur.execute("""
+        SELECT MAX(snapshot_date) FROM charts WHERE country=? AND chart_type=?
+    """, (country, chart_type))
+    latest_date = cur.fetchone()[0]
+    if not latest_date:
+        return {"rows": []}
+
+    cur.execute("""
+        SELECT app_id, app_name, developer, rank, category, subcategory
+        FROM charts
+        WHERE country=? AND chart_type=? AND snapshot_date=?
+        ORDER BY rank ASC LIMIT ?
+    """, (country, chart_type, latest_date, limit))
+    rows = [dict(zip([c[0] for c in cur.description], r)) for r in cur.fetchall()]
+    con.close()
+    return {"snapshot_date": latest_date, "rows": rows}
+
+
+@app.get("/compare")
+def compare(country: str = Query("US"), chart_type: str = Query("top_free"), lookback_days: int = Query(7)):
+    """Сравнява последния снапшот спрямо предходен (до 7 дни назад)"""
+    con = connect()
+    cur = con.cursor()
+    cur.execute("""
+        SELECT DISTINCT snapshot_date FROM charts
+        WHERE country=? AND chart_type=?
+        ORDER BY snapshot_date DESC LIMIT 8
+    """, (country, chart_type))
+    dates = [r[0] for r in cur.fetchall()]
+    if len(dates) < 2:
+        return {"results": [], "message": "Not enough snapshots to compare."}
+    latest, previous = dates[0], dates[1]
+
+    cur.execute("""
+        SELECT app_id, rank FROM charts
+        WHERE country=? AND chart_type=? AND snapshot_date=?
+    """, (country, chart_type, latest))
+    latest_ranks = {a: r for a, r in cur.fetchall()}
+
+    cur.execute("""
+        SELECT app_id, rank FROM charts
+        WHERE country=? AND chart_type=? AND snapshot_date=?
+    """, (country, chart_type, previous))
+    prev_ranks = {a: r for a, r in cur.fetchall()}
+
+    results = []
+    for app_id, rank_now in latest_ranks.items():
+        if app_id not in prev_ranks:
+            status = "NEW"
+            delta = None
+        else:
+            delta = prev_ranks[app_id] - rank_now
+            if delta > 0:
+                status = "MOVER_UP"
+            elif delta < 0:
+                status = "MOVER_DOWN"
+            else:
+                status = "IN_TOP"
+        results.append({"app_id": app_id, "current_rank": rank_now, "delta": delta, "status": status})
+
+    dropouts = [{"app_id": a, "previous_rank": r, "status": "DROPOUT"} for a, r in prev_ranks.items() if a not in latest_ranks]
+
+    con.close()
+    return {
+        "latest_snapshot": latest,
+        "previous_snapshot": previous,
+        "results": results,
+        "dropouts": dropouts
+    }
+
+
+@app.get("/reports/weekly")
+def weekly(country: str = "US", chart_type: str = "top_free"):
+    """Връща NEW и DROPOUT за UI седмичния отчет"""
+    data = compare(country=country, chart_type=chart_type)
+    new_items = [r for r in data["results"] if r["status"] == "NEW"]
+    dropouts = data["dropouts"]
+    return {
+        "latest_snapshot": data["latest_snapshot"],
+        "new_entries": new_items,
+        "dropouts": dropouts
+    }

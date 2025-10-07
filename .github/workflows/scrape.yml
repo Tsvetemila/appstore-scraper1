@@ -44,6 +44,13 @@ jobs:
       - name: Merge Results
         run: python scraper/merge_results.py
 
+      - name: Ensure DB schema
+        env:
+          DB_PATH: appstore-api/data/app_data.db
+        run: |
+          python utils/init_db.py
+
+
       # --- Качване в Google Drive (ако файлът съществува) ---
       - name: Upload database to Google Drive
         env:
