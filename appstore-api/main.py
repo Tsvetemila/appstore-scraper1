@@ -15,7 +15,7 @@ from googleapiclient.http import MediaIoBaseDownload
 
 
 def ensure_database_from_drive():
-    local_path = "appstore-api/data/app_data.db"
+    local_path = "data/app_data.db"
     creds_json = os.getenv("GOOGLE_CREDS_JSON")
     folder_id = os.getenv("GOOGLE_DRIVE_FOLDER_ID")
 
