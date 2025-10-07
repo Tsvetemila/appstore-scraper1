@@ -68,7 +68,7 @@ def ensure_database_from_drive():
 ensure_database_from_drive()
 
 # --- Локализация на пътищата/базата -----------------------------------------
-APP_DIR = Path(__file__).resolve().parent.parent
+APP_DIR = Path(__file__).resolve().parent
 
 _candidates: List[Optional[Path]] = [
     Path(os.getenv("DB_PATH")) if os.getenv("DB_PATH") else None,
@@ -153,3 +153,7 @@ def connect() -> sqlite3.Connection:
     return con
 
 # (тук нататък логиката ти за /meta, /compare7, /weekly, /run-scraper и т.н. остава без промени)
+
+@app.get("/meta")
+def get_meta():
+    return {"status": "ok", "message": "API connected and DB ready"}
