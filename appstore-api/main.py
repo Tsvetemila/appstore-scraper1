@@ -121,6 +121,15 @@ def populate_derived_tables(db_path):
     conn = sqlite3.connect(db_path)
     cur = conn.cursor()
 
+    # --- Проверка дали има колона developer в charts
+    cur.execute("PRAGMA table_info(charts);")
+    columns = [c[1] for c in cur.fetchall()]
+    if "developer" not in columns:
+        print("⚙️ Adding missing column 'developer' to charts...")
+        cur.execute("ALTER TABLE charts ADD COLUMN developer TEXT;")
+        conn.commit()
+
+    # Проверка за данни
     cur.execute("SELECT COUNT(*) FROM charts")
     chart_count = cur.fetchone()[0]
     if chart_count == 0:
@@ -128,23 +137,27 @@ def populate_derived_tables(db_path):
         conn.close()
         return
 
-    # Apps
+    # --- Попълване на apps
     cur.execute("SELECT COUNT(*) FROM apps")
     apps_count = cur.fetchone()[0]
     if apps_count == 0:
-        print("🧩 Populating apps...")
-        cur.execute("""
-            INSERT INTO apps (app_id, name, developer)
-            SELECT DISTINCT app_id, app_name, developer FROM charts
-            WHERE app_id IS NOT NULL;
-        """)
-        conn.commit()
+        print("🧩 Populating apps table...")
+        try:
+            cur.execute("""
+                INSERT INTO apps (app_id, name, developer)
+                SELECT DISTINCT app_id, app_name, COALESCE(developer, '')
+                FROM charts
+                WHERE app_id IS NOT NULL;
+            """)
+            conn.commit()
+        except Exception as e:
+            print(f"⚠️ Skipping apps population: {e}")
 
-    # Snapshots
+    # --- Попълване на snapshots
     cur.execute("SELECT COUNT(*) FROM snapshots")
     snap_count = cur.fetchone()[0]
     if snap_count == 0:
-        print("🧩 Populating snapshots...")
+        print("🧩 Populating snapshots table...")
         cur.execute("""
             INSERT INTO snapshots (snapshot_date, country, category, subcategory, data)
             SELECT DISTINCT snapshot_date, country, category, subcategory, ''
