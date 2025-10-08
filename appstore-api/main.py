@@ -134,6 +134,65 @@ def ensure_tables_exist(db_path: str):
     except Exception as e:
         print(f"❌ Error ensuring tables: {e}")
 
+# --- ще попълни таблиците,ако са празн --------------------------------------------
+
+import sqlite3
+
+def populate_derived_tables(db_path):
+    conn = sqlite3.connect(db_path)
+    cur = conn.cursor()
+
+    # 1️⃣ Проверяваме дали има записи в charts
+    cur.execute("SELECT COUNT(*) FROM charts")
+    chart_count = cur.fetchone()[0]
+    print(f"Charts table rows: {chart_count}")
+
+    if chart_count == 0:
+        print("⚠️ Charts table is empty — nothing to populate.")
+        conn.close()
+        return
+
+    # 2️⃣ Попълваме apps (уникални приложения по app_id)
+    cur.execute("SELECT COUNT(*) FROM apps")
+    apps_count = cur.fetchone()[0]
+    if apps_count == 0:
+        print("🧩 Populating 'apps' table from charts...")
+        cur.execute("""
+            INSERT INTO apps (app_id, name, developer, country)
+            SELECT DISTINCT app_id, app_name, developer, country
+            FROM charts
+            WHERE app_id IS NOT NULL;
+        """)
+        print(f"✅ Inserted apps from charts.")
+        conn.commit()
+
+    # 3️⃣ Попълваме snapshots (ежедневни снимки)
+    cur.execute("SELECT COUNT(*) FROM snapshots")
+    snap_count = cur.fetchone()[0]
+    if snap_count == 0:
+        print("🧩 Populating 'snapshots' table from charts...")
+        cur.execute("""
+            INSERT INTO snapshots (snapshot_date, country, chart_type, category, app_id, rank)
+            SELECT snapshot_date, country, chart_type, category, app_id, rank
+            FROM charts;
+        """)
+        print("✅ Snapshots created.")
+        conn.commit()
+
+    # 4️⃣ Подготвяме compare_results (временно празна)
+    cur.execute("SELECT COUNT(*) FROM compare_results")
+    comp_count = cur.fetchone()[0]
+    if comp_count == 0:
+        print("🧩 Initializing empty compare_results table.")
+        conn.commit()
+
+    conn.close()
+    print("✅ Derived tables populated successfully.")
+
+populate_derived_tables(DB_PATH)
+
+
+
 
 # --- Инициализация при стартиране --------------------------------------------
 ensure_database_from_drive()
