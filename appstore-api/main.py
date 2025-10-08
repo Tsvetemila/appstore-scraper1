@@ -1,16 +1,15 @@
 # appstore-api/main.py
-from fastapi import FastAPI, Query, HTTPException
+from fastapi import FastAPI, Query, Response
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
 from typing import Optional, List, Dict, Any
 from pathlib import Path
-import os, sqlite3, json, io
+import os, sqlite3, json, io, csv
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload
 from datetime import datetime, timedelta
 
-# --- 1️⃣ Сваляне на базата от Google Drive ------------------------------------
+# ------------------------- 1) Download DB from Google Drive (once) -------------------------
 def ensure_database_from_drive():
     local_path = "appstore-api/appstore-api/data/app_data.db"
     creds_json = os.getenv("GOOGLE_CREDS_JSON")
@@ -52,7 +51,7 @@ def ensure_database_from_drive():
         print(f"❌ Error downloading DB: {e}")
 
 
-# --- 2️⃣ Създаване на таблици при нужда --------------------------------------
+# ------------------------- 2) Ensure tables/columns exist ----------------------------------
 def ensure_tables_exist(db_path: str):
     print("🧩 Checking database structure...")
     con = sqlite3.connect(db_path)
@@ -112,53 +111,34 @@ def ensure_tables_exist(db_path: str):
     for name, ddl in tables.items():
         cur.execute(ddl)
     con.commit()
+
+    # make sure some columns exist even on old DBs
+    for tbl, col in [("charts", "developer"), ("snapshots", "category"), ("snapshots", "subcategory"), ("snapshots", "data")]:
+        cur.execute(f"PRAGMA table_info({tbl});")
+        cols = [c[1] for c in cur.fetchall()]
+        if col not in cols:
+            print(f"⚙️ Adding missing column '{col}' to {tbl}...")
+            cur.execute(f"ALTER TABLE {tbl} ADD COLUMN {col} TEXT;")
+            con.commit()
+
     con.close()
     print("✅ Database structure verified.")
 
 
-# --- 3️⃣ Попълване на производни таблици при първо стартиране -----------------
-
-def populate_derived_tables(db_path):
+# ------------------------- 3) Populate derived tables (first run only) ---------------------
+def populate_derived_tables(db_path: str):
     conn = sqlite3.connect(db_path)
     cur = conn.cursor()
 
-    # --- Проверка дали има нужните колони в charts
-    cur.execute("PRAGMA table_info(charts);")
-    charts_columns = [c[1] for c in cur.fetchall()]
-    if "developer" not in charts_columns:
-        print("⚙️ Adding missing column 'developer' to charts...")
-        cur.execute("ALTER TABLE charts ADD COLUMN developer TEXT;")
-        conn.commit()
-
-    # --- Проверка и добавяне на колони в snapshots
-    cur.execute("PRAGMA table_info(snapshots);")
-    snap_columns = [c[1] for c in cur.fetchall()]
-    added = []
-    if "category" not in snap_columns:
-        cur.execute("ALTER TABLE snapshots ADD COLUMN category TEXT;")
-        added.append("category")
-    if "subcategory" not in snap_columns:
-        cur.execute("ALTER TABLE snapshots ADD COLUMN subcategory TEXT;")
-        added.append("subcategory")
-    if "data" not in snap_columns:
-        cur.execute("ALTER TABLE snapshots ADD COLUMN data TEXT;")
-        added.append("data")
-    if added:
-        conn.commit()
-        print(f"⚙️ Added missing columns to snapshots: {', '.join(added)}")
-
-    # Проверка за данни
     cur.execute("SELECT COUNT(*) FROM charts")
-    chart_count = cur.fetchone()[0]
-    if chart_count == 0:
+    if cur.fetchone()[0] == 0:
         print("⚠️ Charts table empty — nothing to populate.")
         conn.close()
         return
 
-    # --- Попълване на apps
+    # apps
     cur.execute("SELECT COUNT(*) FROM apps")
-    apps_count = cur.fetchone()[0]
-    if apps_count == 0:
+    if cur.fetchone()[0] == 0:
         print("🧩 Populating apps table...")
         try:
             cur.execute("""
@@ -171,10 +151,9 @@ def populate_derived_tables(db_path):
         except Exception as e:
             print(f"⚠️ Skipping apps population: {e}")
 
-    # --- Попълване на snapshots
+    # snapshots (one per date+country+category+subcategory)
     cur.execute("SELECT COUNT(*) FROM snapshots")
-    snap_count = cur.fetchone()[0]
-    if snap_count == 0:
+    if cur.fetchone()[0] == 0:
         print("🧩 Populating snapshots table...")
         try:
             cur.execute("""
@@ -190,8 +169,7 @@ def populate_derived_tables(db_path):
     print("✅ Derived tables populated.")
 
 
-
-# --- 4️⃣ Инициализация --------------------------------------------------------
+# ------------------------- 4) Bootstrap DB & app -------------------------------------------
 ensure_database_from_drive()
 
 APP_DIR = Path(__file__).resolve().parent
@@ -208,8 +186,7 @@ print(f"📘 Using DB: {DB_PATH}")
 ensure_tables_exist(str(DB_PATH))
 populate_derived_tables(str(DB_PATH))
 
-# --- 5️⃣ FastAPI setup --------------------------------------------------------
-app = FastAPI(title="AppStore Charts API", version="1.2")
+app = FastAPI(title="AppStore Charts API", version="1.3")
 
 app.add_middleware(
     CORSMiddleware,
@@ -229,20 +206,44 @@ def connect():
     return con
 
 
-# --- 6️⃣ Основни endpoint-и ---------------------------------------------------
+# ------------------------- helpers ----------------------------------------------------------
+def _where(filters: Dict[str, Optional[str]]) -> (str, List[Any]):
+    """Builds WHERE piece and params for optional filters."""
+    parts, params = ["chart_type='top_free'"], []
+    for col in ("country", "category", "subcategory"):
+        val = filters.get(col)
+        if val and val != "all":
+            parts.append(f"{col}=?")
+            params.append(val)
+    return " AND ".join(parts), params
 
+
+# ------------------------- 5) META (for filters) -------------------------------------------
 @app.get("/meta")
-def get_meta():
-    """Връща динамични филтри за frontend (страни, категории, подкатегории)."""
+def get_meta(category: Optional[str] = None):
+    """
+    Returns dynamic filter values:
+      - countries (always all)
+      - categories (always all)
+      - subcategories (all OR only for the selected category if provided)
+    """
     con = connect()
     cur = con.cursor()
     data = {}
     try:
         cur.execute("SELECT DISTINCT country FROM charts WHERE country IS NOT NULL ORDER BY country")
         data["countries"] = [r[0] for r in cur.fetchall()]
+
         cur.execute("SELECT DISTINCT category FROM charts WHERE category IS NOT NULL ORDER BY category")
         data["categories"] = [r[0] for r in cur.fetchall()]
-        cur.execute("SELECT DISTINCT subcategory FROM charts WHERE subcategory IS NOT NULL ORDER BY subcategory")
+
+        if category and category != "all":
+            cur.execute(
+                "SELECT DISTINCT subcategory FROM charts WHERE category=? AND subcategory IS NOT NULL ORDER BY subcategory",
+                (category,)
+            )
+        else:
+            cur.execute("SELECT DISTINCT subcategory FROM charts WHERE subcategory IS NOT NULL ORDER BY subcategory")
         data["subcategories"] = [r[0] for r in cur.fetchall()]
     except Exception as e:
         print(f"⚠️ Error in /meta: {e}")
@@ -252,9 +253,9 @@ def get_meta():
     return data
 
 
+# ------------------------- 6) Current Top 50 (for a country) -------------------------------
 @app.get("/charts")
 def charts(country: str = "US", limit: int = 50):
-    """Връща последния топ 50 за дадена държава."""
     con = connect(); cur = con.cursor()
     cur.execute("SELECT MAX(snapshot_date) FROM charts WHERE country=? AND chart_type='top_free'", (country,))
     latest = cur.fetchone()[0]
@@ -272,18 +273,23 @@ def charts(country: str = "US", limit: int = 50):
     return {"snapshot_date": latest, "rows": rows}
 
 
-# --- 7️⃣ Weekly comparison logic (last 7 days) -------------------------------
-
+# ------------------------- 7) Weekly compare (last 7 days) ---------------------------------
 @app.get("/compare/weekly-full")
-def compare_weekly_full(country: str = "US", lookback_days: int = 7):
+def compare_weekly_full(
+    country: str = "US",
+    lookback_days: int = 7,
+    category: Optional[str] = Query(None),
+    subcategory: Optional[str] = Query(None),
+):
     """
-    Сравнява последния снапшот спрямо всички снапшоти от последните 7 дни.
-    Връща NEW / DROPPED / UP / DOWN / SAME.
+    Compares the latest snapshot against ALL snapshots from the last `lookback_days`.
+    Filters by country/category/subcategory when provided.
+    Returns rows with: current_rank, previous_rank (avg of last days), delta and status:
+      NEW / DROPPED / MOVER UP / MOVER DOWN / IN TOP
     """
-    con = connect()
-    cur = con.cursor()
+    con = connect(); cur = con.cursor()
 
-    # Намираме най-новия snapshot
+    # latest snapshot date (per country)
     cur.execute("""
         SELECT MAX(snapshot_date) FROM charts
         WHERE country=? AND chart_type='top_free'
@@ -293,11 +299,10 @@ def compare_weekly_full(country: str = "US", lookback_days: int = 7):
         con.close()
         return {"message": "No snapshots found", "results": []}
 
-    # Намираме всички snapshot-и за последните 7 дни
+    # previous dates (strictly before latest)
     cur.execute("""
         SELECT DISTINCT snapshot_date FROM charts
-        WHERE country=? AND chart_type='top_free'
-          AND snapshot_date < ?
+        WHERE country=? AND chart_type='top_free' AND snapshot_date < ?
         ORDER BY snapshot_date DESC LIMIT ?
     """, (country, latest, lookback_days))
     prev_dates = [r[0] for r in cur.fetchall()]
@@ -305,37 +310,53 @@ def compare_weekly_full(country: str = "US", lookback_days: int = 7):
         con.close()
         return {"message": "Not enough previous snapshots", "results": []}
 
-    # Текущи
-    cur.execute("""
+    # WHERE for optional filters (without date)
+    where_base, params_base = _where({"country": country, "category": category, "subcategory": subcategory})
+
+    # current snapshot rows
+    cur.execute(f"""
         SELECT app_id, app_name, developer, category, subcategory, rank
         FROM charts
-        WHERE country=? AND chart_type='top_free' AND snapshot_date=?
-    """, (country, latest))
-    current_data = {r[0]: r for r in cur.fetchall()}
+        WHERE {where_base} AND snapshot_date=?
+    """, (*params_base, latest))
+    current_rows = cur.fetchall()
+    current_data = {r["app_id"]: r for r in current_rows}
 
-    # Предишни 7 дни
-    prev_data = {}
+    # previous 7 days data: ranks + last known app_name/developer
+    prev_data: Dict[str, Dict[str, Any]] = {}
     for d in prev_dates:
-        cur.execute("""
-            SELECT app_id, rank FROM charts
-            WHERE country=? AND chart_type='top_free' AND snapshot_date=?
-        """, (country, d))
-        for app_id, rank in cur.fetchall():
+        cur.execute(f"""
+            SELECT app_id, app_name, developer, category, subcategory, rank
+            FROM charts
+            WHERE {where_base} AND snapshot_date=?
+        """, (*params_base, d))
+        for row in cur.fetchall():
+            app_id = row["app_id"]
             if app_id not in prev_data:
-                prev_data[app_id] = []
-            prev_data[app_id].append(rank)
+                prev_data[app_id] = {
+                    "ranks": [],
+                    "app_name": row["app_name"],
+                    "developer": row["developer"],
+                    "category": row["category"],
+                    "subcategory": row["subcategory"],
+                }
+            prev_data[app_id]["ranks"].append(row["rank"])
 
-    results = []
+    results: List[Dict[str, Any]] = []
 
-    # Обработка за текущите приложения
+    # apps that are in the current top
     for app_id, row in current_data.items():
-        app_name, dev, cat, subcat, rank_now = row[1], row[2], row[3], row[4], row[5]
+        rank_now = row["rank"]
+        app_name = row["app_name"]
+        dev = row["developer"]
+        cat = row["category"]
+        subcat = row["subcategory"]
+
         if app_id not in prev_data:
             status, rank_prev, rank_change = "NEW", None, None
         else:
-            # Средна стойност от предходните 7 дни
-            prev_ranks = prev_data[app_id]
-            rank_prev = int(sum(prev_ranks) / len(prev_ranks))
+            ranks = prev_data[app_id]["ranks"]
+            rank_prev = int(sum(ranks) / len(ranks))
             rank_change = rank_prev - rank_now
             if rank_change > 0:
                 status = "MOVER UP"
@@ -343,6 +364,7 @@ def compare_weekly_full(country: str = "US", lookback_days: int = 7):
                 status = "MOVER DOWN"
             else:
                 status = "IN TOP"
+
         results.append({
             "app_id": app_id,
             "app_name": app_name,
@@ -353,24 +375,25 @@ def compare_weekly_full(country: str = "US", lookback_days: int = 7):
             "previous_rank": rank_prev,
             "delta": rank_change,
             "status": status,
-            "country": country
+            "country": country,
         })
 
-    # Приложения, които са били, но вече ги няма
-    for app_id, prev_ranks in prev_data.items():
+    # apps that dropped out
+    for app_id, pdata in prev_data.items():
         if app_id not in current_data:
-            rank_prev = int(sum(prev_ranks) / len(prev_ranks))
+            ranks = pdata["ranks"]
+            rank_prev = int(sum(ranks) / len(ranks))
             results.append({
                 "app_id": app_id,
-                "app_name": None,
-                "developer": None,
-                "category": None,
-                "subcategory": None,
+                "app_name": pdata["app_name"],
+                "developer": pdata["developer"],
+                "category": pdata["category"],
+                "subcategory": pdata["subcategory"],
                 "current_rank": None,
                 "previous_rank": rank_prev,
                 "delta": None,
                 "status": "DROPPED",
-                "country": country
+                "country": country,
             })
 
     con.close()
@@ -382,21 +405,59 @@ def compare_weekly_full(country: str = "US", lookback_days: int = 7):
     }
 
 
-# --- Aliases for frontend compatibility ---
+# ----- Aliases used by frontend -------------------------------------------------------------
 @app.get("/compare")
-def compare_alias(limit: int = 50, country: str = "US"):
-    """Alias for /compare/weekly-full used by frontend."""
-    return compare_weekly_full(country=country, lookback_days=7)
+def compare_alias(
+    limit: int = 50,
+    country: str = "US",
+    category: Optional[str] = None,
+    subcategory: Optional[str] = None,
+):
+    return compare_weekly_full(country=country, category=category, subcategory=subcategory, lookback_days=7)
+
 
 @app.get("/reports/weekly")
-def compare_report_alias(country: str = "US"):
-    """Alias for /compare/reports/weekly."""
-    data = compare_weekly_full(country=country, lookback_days=7)
-    new_apps = [r for r in data["results"] if r["status"] == "NEW"]
-    dropped = [r for r in data["results"] if r["status"] == "DROPPED"]
+def weekly_report(
+    country: str = "US",
+    category: Optional[str] = None,
+    subcategory: Optional[str] = None,
+    format: Optional[str] = None,
+):
+    data = compare_weekly_full(country=country, category=category, subcategory=subcategory, lookback_days=7)
+
+    new_apps = [
+        {
+            "rank": r["current_rank"],
+            "app_id": r["app_id"],
+            "app_name": r["app_name"],
+            "developer_name": r["developer"],
+        }
+        for r in data["results"] if r["status"] == "NEW"
+    ]
+
+    dropped_apps = [
+        {
+            "rank": r["previous_rank"],
+            "app_id": r["app_id"],
+            "app_name": r["app_name"],
+            "developer_name": r["developer"],
+        }
+        for r in data["results"] if r["status"] == "DROPPED"
+    ]
+
+    # optional CSV export (single file with a "bucket" column)
+    if (format or "").lower() == "csv":
+        output = io.StringIO()
+        writer = csv.writer(output)
+        writer.writerow(["bucket", "rank", "app", "developer", "app_id"])
+        for a in new_apps:
+            writer.writerow(["NEW", a["rank"], a["app_name"], a["developer_name"], a["app_id"]])
+        for a in dropped_apps:
+            writer.writerow(["DROPPED", a["rank"], a["app_name"], a["developer_name"], a["app_id"]])
+        return Response(content=output.getvalue(), media_type="text/csv")
+
     return {
         "latest_snapshot": data["latest_snapshot"],
         "new": new_apps,
-        "dropped": dropped
+        "dropped": dropped_apps
     }
-
