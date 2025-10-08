@@ -117,17 +117,32 @@ def ensure_tables_exist(db_path: str):
 
 
 # --- 3️⃣ Попълване на производни таблици при първо стартиране -----------------
+
 def populate_derived_tables(db_path):
     conn = sqlite3.connect(db_path)
     cur = conn.cursor()
 
-    # --- Проверка дали има колона developer в charts
+    # --- Проверка дали има нужните колони в charts
     cur.execute("PRAGMA table_info(charts);")
-    columns = [c[1] for c in cur.fetchall()]
-    if "developer" not in columns:
+    charts_columns = [c[1] for c in cur.fetchall()]
+    if "developer" not in charts_columns:
         print("⚙️ Adding missing column 'developer' to charts...")
         cur.execute("ALTER TABLE charts ADD COLUMN developer TEXT;")
         conn.commit()
+
+    # --- Проверка и добавяне на колони в snapshots
+    cur.execute("PRAGMA table_info(snapshots);")
+    snap_columns = [c[1] for c in cur.fetchall()]
+    added = []
+    if "category" not in snap_columns:
+        cur.execute("ALTER TABLE snapshots ADD COLUMN category TEXT;")
+        added.append("category")
+    if "subcategory" not in snap_columns:
+        cur.execute("ALTER TABLE snapshots ADD COLUMN subcategory TEXT;")
+        added.append("subcategory")
+    if added:
+        conn.commit()
+        print(f"⚙️ Added missing columns to snapshots: {', '.join(added)}")
 
     # Проверка за данни
     cur.execute("SELECT COUNT(*) FROM charts")
@@ -158,15 +173,19 @@ def populate_derived_tables(db_path):
     snap_count = cur.fetchone()[0]
     if snap_count == 0:
         print("🧩 Populating snapshots table...")
-        cur.execute("""
-            INSERT INTO snapshots (snapshot_date, country, category, subcategory, data)
-            SELECT DISTINCT snapshot_date, country, category, subcategory, ''
-            FROM charts;
-        """)
-        conn.commit()
+        try:
+            cur.execute("""
+                INSERT INTO snapshots (snapshot_date, country, category, subcategory, data)
+                SELECT DISTINCT snapshot_date, country, category, subcategory, ''
+                FROM charts;
+            """)
+            conn.commit()
+        except Exception as e:
+            print(f"⚠️ Skipping snapshots population: {e}")
 
     conn.close()
     print("✅ Derived tables populated.")
+
 
 
 # --- 4️⃣ Инициализация --------------------------------------------------------
