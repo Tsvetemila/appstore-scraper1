@@ -141,8 +141,8 @@ def populate_derived_tables(db_path):
         cur.execute("ALTER TABLE snapshots ADD COLUMN subcategory TEXT;")
         added.append("subcategory")
     if "data" not in snap_columns:
-    cur.execute("ALTER TABLE snapshots ADD COLUMN data TEXT;")
-    added.append("data")
+        cur.execute("ALTER TABLE snapshots ADD COLUMN data TEXT;")
+        added.append("data")
     if added:
         conn.commit()
         print(f"⚙️ Added missing columns to snapshots: {', '.join(added)}")
