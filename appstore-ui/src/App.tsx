@@ -22,7 +22,6 @@ type WeeklyRow = {
   developer_name: string;
 };
 
-// ✅ Промяната е само тук:
 const API = "https://appstore-api.onrender.com";
 
 function StatusIcon({ row }: { row: CompareRow }) {
@@ -60,7 +59,7 @@ export default function App() {
     })();
   }, []);
 
-  // Load compare7 data
+  // Load compare data (new API)
   async function loadCompare() {
     const qs = new URLSearchParams();
     qs.set("limit", "50");
@@ -68,7 +67,7 @@ export default function App() {
     if (category !== "all") qs.set("category", category);
     if (subcategory !== "all") qs.set("subcategory", subcategory);
 
-    const r = await fetch(`${API}/compare7?${qs.toString()}`);
+    const r = await fetch(`${API}/compare?${qs.toString()}`);
     const j = await r.json();
     setRows(j.results ?? []);
   }
@@ -119,7 +118,7 @@ export default function App() {
       </div>
 
       {/* Filters */}
-      <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 16 }}>
         <select value={country} onChange={(e) => setCountry(e.target.value)}>
           <option value="all">All countries</option>
           {countries.map((c) => <option key={c}>{c}</option>)}
@@ -133,7 +132,6 @@ export default function App() {
         <select
           value={subcategory}
           onChange={(e) => setSubcategory(e.target.value)}
-          disabled={category !== "Games"}
         >
           <option value="all">All subcategories</option>
           {subcategories.map((s) => <option key={s}>{s}</option>)}
@@ -151,8 +149,8 @@ export default function App() {
 
       {/* Compare View */}
       {tab === "compare" && (
-        <table style={{ width: "100%", borderCollapse: "collapse" }}>
-          <thead>
+        <table style={{ width: "100%", borderCollapse: "collapse", border: "1px solid #ddd" }}>
+          <thead style={{ background: "#f5f5f5" }}>
             <tr>
               <th>App</th><th>Country</th><th>Category</th><th>Subcategory</th>
               <th>Current</th><th>Previous</th><th>Δ</th><th>Status</th>
@@ -160,7 +158,7 @@ export default function App() {
           </thead>
           <tbody>
             {rows.map((r, i) => (
-              <tr key={r.app_id + i}>
+              <tr key={r.app_id + i} style={{ borderBottom: "1px solid #eee" }}>
                 <td>{r.app_name}</td>
                 <td>{r.country}</td>
                 <td>{r.category}</td>
@@ -177,11 +175,11 @@ export default function App() {
 
       {/* Weekly Report View */}
       {tab === "weekly" && (
-        <div style={{ display: "flex", gap: 40 }}>
-          <div style={{ flex: 1 }}>
+        <div style={{ display: "flex", gap: 40, flexWrap: "wrap" }}>
+          <div style={{ flex: 1, minWidth: 450 }}>
             <h3>🆕 New Entries ({weekly.new.length})</h3>
             <table style={{ width: "100%", borderCollapse: "collapse" }}>
-              <thead><tr><th>Rank</th><th>App</th><th>Dev</th></tr></thead>
+              <thead><tr><th>Rank</th><th>App</th><th>Developer</th></tr></thead>
               <tbody>
                 {weekly.new.map((a, i) => (
                   <tr key={a.app_id + i}><td>{a.rank}</td><td>{a.app_name}</td><td>{a.developer_name}</td></tr>
@@ -190,10 +188,10 @@ export default function App() {
             </table>
           </div>
 
-          <div style={{ flex: 1 }}>
+          <div style={{ flex: 1, minWidth: 450 }}>
             <h3>❌ Dropped ({weekly.dropped.length})</h3>
             <table style={{ width: "100%", borderCollapse: "collapse" }}>
-              <thead><tr><th>Rank</th><th>App</th><th>Dev</th></tr></thead>
+              <thead><tr><th>Rank</th><th>App</th><th>Developer</th></tr></thead>
               <tbody>
                 {weekly.dropped.map((a, i) => (
                   <tr key={a.app_id + i}><td>{a.rank}</td><td>{a.app_name}</td><td>{a.developer_name}</td></tr>
