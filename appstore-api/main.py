@@ -348,3 +348,15 @@ def compare_weekly_full(country: str = "US", lookback_days: int = 7):
         "total_results": len(results),
         "results": results
     }
+
+# --- Aliases for frontend compatibility ---
+@app.get("/compare")
+def compare_alias(limit: int = 50, country: str = "US"):
+    """Alias for /compare/weekly-full used by frontend"""
+    return compare_weekly_full(country=country, lookback_days=7)
+
+@app.get("/reports/weekly")
+def compare_report_alias(country: str = "US"):
+    """Alias for /compare/reports/weekly"""
+    return compare_weekly_full(country=country, lookback_days=7)
+
