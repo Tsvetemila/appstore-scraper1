@@ -503,140 +503,154 @@ def admin_refresh():
 @app.get("/history")
 def history_view(
     country: Optional[str] = Query(None, description="Country code (e.g. US, FR)"),
-    lookback_days: int = Query(7, description="How many days back to compare"),
+    category: Optional[str] = Query(None),
+    subcategory: Optional[str] = Query(None),
+    lookback_days: int = 7,
     date: Optional[str] = Query(None, description="Filter by specific snapshot_date (YYYY-MM-DD)"),
-    status: Optional[str] = Query(None, description="Filter by status: NEW, DROPPED, RE-ENTRY, MOVED"),
+    status: Optional[str] = Query(None, description="Filter by status: NEW, DROPPED, RE-ENTRY"),
     export: Optional[str] = Query(None, description="Set to csv for CSV export"),
 ):
-    con = connect()
-    cur = con.cursor()
+    con = connect(); cur = con.cursor()
 
-    # 1️⃣ Последни snapshot дати
-    where_country = "WHERE chart_type='top_free'"
-    params = []
-    if country:
-        where_country += " AND country=?"
-        params.append(country)
+    # базов WHERE по измерения (без дата)
+    where_base, params_base = _where({"country": country, "category": category, "subcategory": subcategory})
 
+    # последните N дати за наличните филтри
     cur.execute(f"""
         SELECT DISTINCT snapshot_date FROM charts
-        {where_country}
+        WHERE {where_base}
         ORDER BY snapshot_date DESC LIMIT ?
-    """, (*params, lookback_days))
-    dates = [r[0] for r in cur.fetchall()]
-    if len(dates) < 2:
+    """, (*params_base, lookback_days))
+    dates_desc = [r[0] for r in cur.fetchall()]
+    if len(dates_desc) < 2:
         con.close()
-        return {"message": "Not enough data for history.", "results": []}
+        return {"message": "Not enough data for history.", "results": [], "available_dates": dates_desc}
 
+    dates = sorted(dates_desc)  # ascending (хронология)
     results = []
-    dates = sorted(dates)
 
-    # 2️⃣ Ден по ден сравнение
     for i in range(1, len(dates)):
         prev_day, curr_day = dates[i - 1], dates[i]
 
-        cur.execute("""
+        # вчера
+        cur.execute(f"""
             SELECT app_id, app_name, rank
             FROM charts
-            WHERE chart_type='top_free' AND snapshot_date=?""" +
-            (" AND country=?" if country else ""),
-            ((prev_day, country) if country else (prev_day,))
-        )
-        prev_rows = {r["app_id"]: dict(r) for r in cur.fetchall()}
+            WHERE {where_base} AND snapshot_date=?
+        """, (*params_base, prev_day))
+        prev_list = cur.fetchall()
+        prev_by_id   = {r["app_id"]: dict(r) for r in prev_list}
+        prev_by_rank = {r["rank"]: dict(r) for r in prev_list}
+        prev_ids     = set(prev_by_id.keys())
 
-        cur.execute("""
+        # днес
+        cur.execute(f"""
             SELECT app_id, app_name, rank
             FROM charts
-            WHERE chart_type='top_free' AND snapshot_date=?""" +
-            (" AND country=?" if country else ""),
-            ((curr_day, country) if country else (curr_day,))
-        )
-        curr_rows = {r["app_id"]: dict(r) for r in cur.fetchall()}
+            WHERE {where_base} AND snapshot_date=?
+        """, (*params_base, curr_day))
+        curr_list = cur.fetchall()
+        curr_by_id   = {r["app_id"]: dict(r) for r in curr_list}
+        curr_by_rank = {r["rank"]: dict(r) for r in curr_list}
+        curr_ids     = set(curr_by_id.keys())
 
-        prev_ids, curr_ids = set(prev_rows.keys()), set(curr_rows.keys())
+        # --- NEW: кого е изместил (същия ранг от вчера) ---
+        for app_id in (curr_ids - prev_ids):
+            rank_now = curr_by_id[app_id]["rank"]
+            replaced = prev_by_rank.get(rank_now)
+            replaced_id   = replaced["app_id"]  if replaced else None
+            replaced_name = replaced["app_name"] if replaced else None
+            replaced_now_rank = None
+            replaced_status   = None
+            if replaced_id:
+                if replaced_id in curr_by_id:
+                    replaced_now_rank = curr_by_id[replaced_id]["rank"]
+                    replaced_status   = "STILL_IN_TOP"
+                else:
+                    replaced_status   = "DROPPED"
 
-        # NEW
-        new_apps = curr_ids - prev_ids
-        for app_id in new_apps:
             results.append({
                 "date": curr_day,
                 "status": "NEW",
                 "app_id": app_id,
-                "app_name": curr_rows[app_id]["app_name"],
-                "rank": curr_rows[app_id]["rank"],
+                "app_name": curr_by_id[app_id]["app_name"],
+                "rank": rank_now,
+                "replaced_app_id": replaced_id,
+                "replaced_app_name": replaced_name,
+                "replaced_prev_rank": rank_now if replaced_id else None,
+                "replaced_current_rank": replaced_now_rank,
+                "replaced_status": replaced_status,
             })
 
-        # DROPPED
-        dropped_apps = prev_ids - curr_ids
-        for app_id in dropped_apps:
+        # --- DROPPED: кой го е заменил днес на същия ранг ---
+        for app_id in (prev_ids - curr_ids):
+            rank_prev = prev_by_id[app_id]["rank"]
+            replacer  = curr_by_rank.get(rank_prev)
+            replacer_id   = replacer["app_id"]  if replacer else None
+            replacer_name = replacer["app_name"] if replacer else None
+
             results.append({
                 "date": curr_day,
                 "status": "DROPPED",
                 "app_id": app_id,
-                "app_name": prev_rows[app_id]["app_name"],
-                "rank": prev_rows[app_id]["rank"],
+                "app_name": prev_by_id[app_id]["app_name"],
+                "rank": rank_prev,
+                "replaced_by_app_id": replacer_id,
+                "replaced_by_app_name": replacer_name,
+                "replaced_by_rank": rank_prev if replacer_id else None,
             })
 
-        # MOVED
-        for app_id in (curr_ids & prev_ids):
-            prev_rank = prev_rows[app_id]["rank"]
-            curr_rank = curr_rows[app_id]["rank"]
-            if prev_rank != curr_rank:
-                results.append({
-                    "date": curr_day,
-                    "status": "MOVED",
-                    "app_id": app_id,
-                    "app_name": curr_rows[app_id]["app_name"],
-                    "previous_rank": prev_rank,
-                    "current_rank": curr_rank,
-                })
-
-        # RE-ENTRY
+        # --- RE-ENTRY: бил е преди два дни, липсвал вчера, днес отново е вътре ---
         if i > 1:
             prev_prev_day = dates[i - 2]
-            cur.execute("""
+            cur.execute(f"""
                 SELECT app_id FROM charts
-                WHERE chart_type='top_free' AND snapshot_date=?""" +
-                (" AND country=?" if country else ""),
-                ((prev_prev_day, country) if country else (prev_prev_day,))
-            )
-            prev_prev_ids = set(r[0] for r in cur.fetchall())
-            reentries = (curr_ids & prev_prev_ids) - prev_ids
-            for app_id in reentries:
+                WHERE {where_base} AND snapshot_date=?
+            """, (*params_base, prev_prev_day))
+            prev_prev_ids = {r[0] for r in cur.fetchall()}
+            for app_id in (curr_ids & prev_prev_ids) - prev_ids:
                 results.append({
                     "date": curr_day,
                     "status": "RE-ENTRY",
                     "app_id": app_id,
-                    "app_name": curr_rows[app_id]["app_name"],
-                    "rank": curr_rows[app_id]["rank"],
+                    "app_name": curr_by_id[app_id]["app_name"],
+                    "rank": curr_by_id[app_id]["rank"],
                 })
 
     con.close()
 
-    # 3️⃣ Филтри
+    # филтри върху резултата
     if date:
         results = [r for r in results if r["date"] == date]
     if status:
-        results = [r for r in results if r["status"].lower() == status.lower()]
+        status_u = status.upper()
+        results = [r for r in results if r["status"] == status_u]  # MOVED изобщо не се генерира вече
 
-    # 4️⃣ CSV export
+    # CSV експорт (динамичен — по активните филтри)
     if export and export.lower() == "csv":
         output = io.StringIO()
-        writer = csv.writer(output)
-        writer.writerow(["date", "status", "app_id", "app_name", "rank", "previous_rank", "current_rank"])
+        w = csv.writer(output)
+        w.writerow([
+            "date","status","app_id","app_name","rank",
+            "replaced_app_id","replaced_app_name","replaced_prev_rank","replaced_current_rank","replaced_status",
+            "replaced_by_app_id","replaced_by_app_name","replaced_by_rank"
+        ])
         for r in results:
-            writer.writerow([
-                r.get("date"), r.get("status"), r.get("app_id"),
-                r.get("app_name"), r.get("rank") or "",
-                r.get("previous_rank") or "", r.get("current_rank") or ""
+            w.writerow([
+                r.get("date"), r.get("status"), r.get("app_id"), r.get("app_name"), r.get("rank"),
+                r.get("replaced_app_id") or "", r.get("replaced_app_name") or "", r.get("replaced_prev_rank") or "",
+                r.get("replaced_current_rank") or "", r.get("replaced_status") or "",
+                r.get("replaced_by_app_id") or "", r.get("replaced_by_app_name") or "", r.get("replaced_by_rank") or ""
             ])
         return Response(content=output.getvalue(), media_type="text/csv")
 
-    # 5️⃣ JSON output
     return {
         "country": country,
+        "category": category,
+        "subcategory": subcategory,
         "available_dates": dates,
         "filters": {"date": date, "status": status},
         "total_events": len(results),
         "results": results
     }
+
