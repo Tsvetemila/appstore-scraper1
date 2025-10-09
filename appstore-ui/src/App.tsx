@@ -17,7 +17,7 @@ type WeeklyRow = {
   rank: number | null;
   app_id: string;
   app_name: string;
-  developer_name: string;
+  developer_name: string; // присъства в API, но вече не го визуализираме
 };
 
 const API = "https://appstore-api.onrender.com";
@@ -40,50 +40,48 @@ function StatusIcon({ row }: { row: CompareRow }) {
 export default function App() {
   const [tab, setTab] = useState<"compare" | "weekly" | "history">("compare");
 
-  // meta
+  // META (глобални списъци)
   const [countries, setCountries] = useState<string[]>([]);
   const [categories, setCategories] = useState<string[]>([]);
   const [subcategories, setSubcategories] = useState<string[]>([]);
   const [latestSnapshot, setLatestSnapshot] = useState<string | null>(null);
 
-  // filters
+  // глобални филтри (за Compare/Weekly)
   const [country, setCountry] = useState<string>("US");
   const [category, setCategory] = useState<string>("all");
   const [subcategory, setSubcategory] = useState<string>("all");
 
-  // data
+  // данни
   const [rows, setRows] = useState<CompareRow[]>([]);
   const [weekly, setWeekly] = useState<{ new: WeeklyRow[]; dropped: WeeklyRow[] }>({ new: [], dropped: [] });
 
-  // history data + filters
+  // History – отделни филтри (за да не пипат другите табове)
   const [historyRows, setHistoryRows] = useState<any[]>([]);
   const [historyDates, setHistoryDates] = useState<string[]>([]);
   const [historyDate, setHistoryDate] = useState<string>("");
   const [historyStatus, setHistoryStatus] = useState<string>("all");
+  const [historyCountry, setHistoryCountry] = useState<string>("US");
+  const [historyCategory, setHistoryCategory] = useState<string>("all");
+  const [historySubcategory, setHistorySubcategory] = useState<string>("all");
+  const [historySubcatOptions, setHistorySubcatOptions] = useState<string[]>([]);
 
   // sort state (compare)
   const [sortAsc, setSortAsc] = useState<boolean>(true);
 
   // ---------- load META once ----------
   async function loadMeta(selectedCategory?: string) {
-    const res = await fetch(
-      `${API}/meta${selectedCategory ? `?category=${encodeURIComponent(selectedCategory)}` : ""}`
-    );
+    const res = await fetch(`${API}/meta${selectedCategory ? `?category=${encodeURIComponent(selectedCategory)}` : ""}`);
     const m = await res.json();
     setCountries(m.countries ?? []);
     setCategories(m.categories ?? []);
     setSubcategories(m.subcategories ?? []);
     if ((m.countries ?? []).length > 0 && !countries.length) setCountry(m.countries[0]);
   }
+  useEffect(() => { loadMeta().catch(() => {}); }, []);
 
-  useEffect(() => {
-    loadMeta().catch(() => {});
-  }, []);
-
-  // reload subcategories when category changes
+  // reload subcategories when category changes (глобални)
   useEffect(() => {
     loadMeta(category).catch(() => {});
-    // reset subcat when category changes
     setSubcategory("all");
   }, [category]);
 
@@ -113,7 +111,9 @@ export default function App() {
 
   async function loadHistory() {
     const qs = new URLSearchParams();
-    if (country) qs.set("country", country);
+    if (historyCountry) qs.set("country", historyCountry);
+    if (historyCategory !== "all") qs.set("category", historyCategory);
+    if (historySubcategory !== "all") qs.set("subcategory", historySubcategory);
     if (historyStatus !== "all") qs.set("status", historyStatus);
     if (historyDate) qs.set("date", historyDate);
     const r = await fetch(`${API}/history?${qs.toString()}`);
@@ -122,12 +122,34 @@ export default function App() {
     setHistoryDates(j.available_dates ?? []);
   }
 
+  // при смяна на таб/филтри зареждаме съответните данни
   useEffect(() => {
-    if (!country) return;
     if (tab === "compare") loadCompare();
     else if (tab === "weekly") loadWeekly();
     else if (tab === "history") loadHistory();
-  }, [country, category, subcategory, tab, historyDate, historyStatus]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab]);
+
+  // Compare се рефрешва при смяна на неговите филтри
+  useEffect(() => { if (tab === "compare") loadCompare(); }, [country, category, subcategory, tab]);
+
+  // Weekly се рефрешва при смяна на неговите филтри
+  useEffect(() => { if (tab === "weekly") loadWeekly(); }, [country, category, subcategory, tab]);
+
+  // History – мета за подкатегории (само за History филтъра)
+  useEffect(() => {
+    async function loadHistorySubcats(cat: string) {
+      const res = await fetch(`${API}/meta?category=${encodeURIComponent(cat)}`);
+      const m = await res.json();
+      setHistorySubcatOptions(m.subcategories ?? []);
+    }
+    if (historyCategory !== "all") loadHistorySubcats(historyCategory).catch(() => {});
+    else setHistorySubcatOptions([]); // „All subcategories“
+    setHistorySubcategory("all");
+  }, [historyCategory]);
+
+  // при смяна на някой от History филтрите — auto reload
+  useEffect(() => { if (tab === "history") loadHistory(); }, [historyCountry, historyCategory, historySubcategory, historyStatus, historyDate, tab]);
 
   // derived – sorted compare rows
   const sortedRows = useMemo(() => {
@@ -160,7 +182,9 @@ export default function App() {
   }
   function exportHistoryCSV() {
     const qs = new URLSearchParams();
-    if (country) qs.set("country", country);
+    if (historyCountry) qs.set("country", historyCountry);
+    if (historyCategory !== "all") qs.set("category", historyCategory);
+    if (historySubcategory !== "all") qs.set("subcategory", historySubcategory);
     if (historyStatus !== "all") qs.set("status", historyStatus);
     if (historyDate) qs.set("date", historyDate);
     qs.set("export", "csv");
@@ -172,7 +196,6 @@ export default function App() {
       const res = await fetch(`${API}/admin/refresh`);
       const j = await res.json();
       if (j.latest_snapshot) setLatestSnapshot(j.latest_snapshot);
-      // reload current tab after refresh
       if (tab === "compare") await loadCompare();
       else if (tab === "weekly") await loadWeekly();
       else await loadHistory();
@@ -184,118 +207,63 @@ export default function App() {
 
   // ---------- UI ----------
   return (
-    <div
-      style={{
-        fontFamily: "Inter, system-ui, Arial",
-        padding: 16,
-        maxWidth: 1400,
-        margin: "0 auto",
-      }}
-    >
+    <div style={{ fontFamily: "Inter, system-ui, Arial", padding: 16, maxWidth: 1400, margin: "0 auto" }}>
       <h1>📊 App Store Dashboard</h1>
 
       {/* Tabs */}
       <div style={{ display: "flex", gap: 12, marginBottom: 16, flexWrap: "wrap" }}>
         <button
-          style={{
-            background: tab === "compare" ? "#007AFF" : "#dadde1",
-            color: tab === "compare" ? "#fff" : "#111",
-            padding: "6px 14px",
-            borderRadius: 6,
-          }}
+          style={{ background: tab === "compare" ? "#007AFF" : "#dadde1", color: tab === "compare" ? "#fff" : "#111", padding: "6px 14px", borderRadius: 6 }}
           onClick={() => setTab("compare")}
         >
           Compare View
         </button>
         <button
-          style={{
-            background: tab === "weekly" ? "#007AFF" : "#dadde1",
-            color: tab === "weekly" ? "#fff" : "#111",
-            padding: "6px 14px",
-            borderRadius: 6,
-          }}
+          style={{ background: tab === "weekly" ? "#007AFF" : "#dadde1", color: tab === "weekly" ? "#fff" : "#111", padding: "6px 14px", borderRadius: 6 }}
           onClick={() => setTab("weekly")}
         >
           Weekly Report
         </button>
         <button
-          style={{
-            background: tab === "history" ? "#007AFF" : "#dadde1",
-            color: tab === "history" ? "#fff" : "#111",
-            padding: "6px 14px",
-            borderRadius: 6,
-          }}
+          style={{ background: tab === "history" ? "#007AFF" : "#dadde1", color: tab === "history" ? "#fff" : "#111", padding: "6px 14px", borderRadius: 6 }}
           onClick={() => setTab("history")}
         >
           History View
         </button>
       </div>
 
-      {/* Filters + actions */}
+      {/* Глобални филтри (за Compare/Weekly) */}
       <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center", marginBottom: 10 }}>
         <select value={country} onChange={(e) => setCountry(e.target.value)}>
-          {countries.map((c) => (
-            <option key={c} value={c}>
-              {c}
-            </option>
-          ))}
+          {countries.map((c) => (<option key={c} value={c}>{c}</option>))}
         </select>
 
         <select value={category} onChange={(e) => setCategory(e.target.value)}>
           <option value="all">All categories</option>
-          {categories.map((c) => (
-            <option key={c} value={c}>
-              {c}
-            </option>
-          ))}
+          {categories.map((c) => (<option key={c} value={c}>{c}</option>))}
         </select>
 
         <select value={subcategory} onChange={(e) => setSubcategory(e.target.value)}>
           <option value="all">All subcategories</option>
-          {subcategories.map((s) => (
-            <option key={s} value={s}>
-              {s}
-            </option>
-          ))}
+          {subcategories.map((s) => (<option key={s} value={s}>{s}</option>))}
         </select>
 
-        <button
-          onClick={() => {
-            setCategory("all");
-            setSubcategory("all");
-          }}
-        >
-          Reset
-        </button>
+        <button onClick={() => { setCategory("all"); setSubcategory("all"); }}>Reset</button>
+        <button onClick={() => (tab === "compare" ? loadCompare() : tab === "weekly" ? loadWeekly() : loadHistory())}>Reload</button>
 
-        <button onClick={() => (tab === "compare" ? loadCompare() : tab === "weekly" ? loadWeekly() : loadHistory())}>
-          Reload
-        </button>
+        <button onClick={refreshDB} style={{ display: "inline-flex", gap: 6 }}>🔄 Refresh DB</button>
 
-        <button onClick={refreshDB} style={{ display: "inline-flex", gap: 6 }}>
-          🔄 Refresh DB
-        </button>
-
-        {/* Export per view */}
         {tab === "compare" ? (
-          <button onClick={exportCompareCSV} style={{ background: "#28a745", color: "white", padding: "4px 10px", borderRadius: 6 }}>
-            Export CSV
-          </button>
+          <button onClick={exportCompareCSV} style={{ background: "#28a745", color: "white", padding: "4px 10px", borderRadius: 6 }}>Export CSV</button>
         ) : tab === "weekly" ? (
-          <button onClick={exportWeeklyCSV} style={{ background: "#28a745", color: "white", padding: "4px 10px", borderRadius: 6 }}>
-            Export CSV
-          </button>
+          <button onClick={exportWeeklyCSV} style={{ background: "#28a745", color: "white", padding: "4px 10px", borderRadius: 6 }}>Export CSV</button>
         ) : (
-          <button onClick={exportHistoryCSV} style={{ background: "#28a745", color: "white", padding: "4px 10px", borderRadius: 6 }}>
-            Export CSV
-          </button>
+          <button onClick={exportHistoryCSV} style={{ background: "#28a745", color: "white", padding: "4px 10px", borderRadius: 6 }}>Export CSV</button>
         )}
       </div>
 
       {/* Last updated */}
-      <div style={{ marginBottom: 8, color: "#555" }}>
-        Data last updated: <b>{latestSnapshot ?? "N/A"}</b>
-      </div>
+      <div style={{ marginBottom: 8, color: "#555" }}>Data last updated: <b>{latestSnapshot ?? "N/A"}</b></div>
 
       {/* Compare View */}
       {tab === "compare" && (
@@ -308,11 +276,8 @@ export default function App() {
                 <th style={{ textAlign: "left", padding: 8 }}>Country</th>
                 <th style={{ textAlign: "left", padding: 8 }}>Category</th>
                 <th style={{ textAlign: "left", padding: 8 }}>Subcategory</th>
-                <th
-                  style={{ textAlign: "right", padding: 8, cursor: "pointer", whiteSpace: "nowrap" }}
-                  onClick={() => setSortAsc((s) => !s)}
-                  title="Sort by current rank"
-                >
+                <th style={{ textAlign: "right", padding: 8, cursor: "pointer", whiteSpace: "nowrap" }}
+                    onClick={() => setSortAsc((s) => !s)} title="Sort by current rank">
                   Current {sortAsc ? "↑" : "↓"}
                 </th>
                 <th style={{ textAlign: "right", padding: 8, whiteSpace: "nowrap" }}>Previous (avg 7d)</th>
@@ -333,9 +298,7 @@ export default function App() {
                   <td style={{ padding: 8, textAlign: "right", color: (r.delta ?? 0) > 0 ? "green" : (r.delta ?? 0) < 0 ? "red" : undefined }}>
                     {r.delta ?? "—"}
                   </td>
-                  <td style={{ padding: 8, textAlign: "center" }}>
-                    <StatusIcon row={r} />
-                  </td>
+                  <td style={{ padding: 8, textAlign: "center" }}><StatusIcon row={r} /></td>
                 </tr>
               ))}
             </tbody>
@@ -343,7 +306,7 @@ export default function App() {
         </div>
       )}
 
-      {/* Weekly Report View */}
+      {/* Weekly Report View (без Developer колона) */}
       {tab === "weekly" && (
         <div style={{ display: "flex", gap: 40, flexWrap: "wrap" }}>
           <div style={{ flex: 1, minWidth: 420 }}>
@@ -355,7 +318,6 @@ export default function App() {
                     <th style={{ textAlign: "right", padding: 6 }}>Rank</th>
                     <th style={{ textAlign: "left", padding: 6 }}>App</th>
                     <th style={{ textAlign: "left", padding: 6 }}>App ID</th>
-                    <th style={{ textAlign: "left", padding: 6 }}>Developer</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -364,7 +326,6 @@ export default function App() {
                       <td style={{ textAlign: "right", padding: 6 }}>{a.rank ?? "—"}</td>
                       <td style={{ padding: 6 }}>{a.app_name}</td>
                       <td style={{ padding: 6, whiteSpace: "nowrap" }}>{a.app_id}</td>
-                      <td style={{ padding: 6 }}>{a.developer_name}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -381,7 +342,6 @@ export default function App() {
                     <th style={{ textAlign: "right", padding: 6 }}>Rank</th>
                     <th style={{ textAlign: "left", padding: 6 }}>App</th>
                     <th style={{ textAlign: "left", padding: 6 }}>App ID</th>
-                    <th style={{ textAlign: "left", padding: 6 }}>Developer</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -390,7 +350,6 @@ export default function App() {
                       <td style={{ textAlign: "right", padding: 6 }}>{a.rank ?? "—"}</td>
                       <td style={{ padding: 6 }}>{a.app_name}</td>
                       <td style={{ padding: 6, whiteSpace: "nowrap" }}>{a.app_id}</td>
-                      <td style={{ padding: 6 }}>{a.developer_name}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -405,31 +364,42 @@ export default function App() {
         <div style={{ marginTop: 20 }}>
           <h3>📆 History View (Re-Entry Tracker)</h3>
 
-          {/* History Filters */}
+          {/* History Filters (самостоятелни) */}
           <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 12 }}>
+            <select value={historyCountry} onChange={(e) => setHistoryCountry(e.target.value)}>
+              {countries.map((c) => (<option key={c} value={c}>{c}</option>))}
+            </select>
+
+            <select value={historyCategory} onChange={(e) => setHistoryCategory(e.target.value)}>
+              <option value="all">All categories</option>
+              {categories.map((c) => (<option key={c} value={c}>{c}</option>))}
+            </select>
+
+            <select value={historySubcategory} onChange={(e) => setHistorySubcategory(e.target.value)}>
+              <option value="all">All subcategories</option>
+              {(historySubcatOptions.length ? historySubcatOptions : subcategories).map((s) => (
+                <option key={s} value={s}>{s}</option>
+              ))}
+            </select>
+
             <select value={historyStatus} onChange={(e) => setHistoryStatus(e.target.value)}>
               <option value="all">All statuses</option>
               <option value="NEW">NEW</option>
               <option value="DROPPED">DROPPED</option>
-              <option value="MOVED">MOVED</option>
               <option value="RE-ENTRY">RE-ENTRY</option>
             </select>
 
             <select value={historyDate} onChange={(e) => setHistoryDate(e.target.value)}>
               <option value="">All dates</option>
-              {historyDates.map((d) => (
-                <option key={d} value={d}>
-                  {d}
-                </option>
-              ))}
+              {historyDates.map((d) => (<option key={d} value={d}>{d}</option>))}
             </select>
 
+            <button onClick={() => { setHistoryCategory("all"); setHistorySubcategory("all"); setHistoryStatus("all"); setHistoryDate(""); }}>
+              Reset
+            </button>
             <button onClick={loadHistory}>Reload</button>
 
-            <button
-              onClick={exportHistoryCSV}
-              style={{ background: "#28a745", color: "white", padding: "4px 10px", borderRadius: 6 }}
-            >
+            <button onClick={exportHistoryCSV} style={{ background: "#28a745", color: "white", padding: "4px 10px", borderRadius: 6 }}>
               Export CSV
             </button>
           </div>
@@ -444,6 +414,8 @@ export default function App() {
                   <th style={{ textAlign: "left", padding: 8 }}>App ID</th>
                   <th style={{ textAlign: "left", padding: 8 }}>Status</th>
                   <th style={{ textAlign: "right", padding: 8 }}>Rank</th>
+                  <th style={{ textAlign: "left", padding: 8 }}>Replaced ↔ By</th>
+                  <th style={{ textAlign: "left", padding: 8 }}>Replaced Now</th>
                   <th style={{ textAlign: "right", padding: 8 }}>Prev Rank</th>
                   <th style={{ textAlign: "right", padding: 8 }}>Curr Rank</th>
                 </tr>
@@ -451,36 +423,39 @@ export default function App() {
               <tbody>
                 {historyRows.length === 0 && (
                   <tr>
-                    <td colSpan={7} style={{ padding: 8, textAlign: "center", color: "#777" }}>
+                    <td colSpan={9} style={{ padding: 8, textAlign: "center", color: "#777" }}>
                       No data for selected filters.
                     </td>
                   </tr>
                 )}
-                {historyRows.map((r: any, i: number) => (
-                  <tr key={(r.app_id ?? "x") + i} style={{ borderBottom: "1px solid #f0f0f0" }}>
-                    <td style={{ padding: 8 }}>{r.date}</td>
-                    <td style={{ padding: 8 }}>{r.app_name}</td>
-                    <td style={{ padding: 8, whiteSpace: "nowrap" }}>{r.app_id}</td>
-                    <td
-                      style={{
-                        padding: 8,
-                        color:
-                          r.status === "NEW"
-                            ? "#007AFF"
-                            : r.status === "DROPPED"
-                            ? "#cc0000"
-                            : r.status === "RE-ENTRY"
-                            ? "green"
-                            : "#555",
-                      }}
-                    >
-                      {r.status}
-                    </td>
-                    <td style={{ padding: 8, textAlign: "right" }}>{r.rank ?? "—"}</td>
-                    <td style={{ padding: 8, textAlign: "right" }}>{r.previous_rank ?? "—"}</td>
-                    <td style={{ padding: 8, textAlign: "right" }}>{r.current_rank ?? "—"}</td>
-                  </tr>
-                ))}
+                {historyRows.map((r: any, i: number) => {
+                  const replacedName =
+                    r.status === "NEW" ? r.replaced_app_name :
+                    r.status === "DROPPED" ? r.replaced_by_app_name : "";
+                  const replacedNow =
+                    r.status === "NEW"
+                      ? (r.replaced_current_rank ? `now #${r.replaced_current_rank}` : (r.replaced_status === "DROPPED" ? "dropped" : ""))
+                      : (r.status === "DROPPED" && r.replaced_by_rank ? `rank #${r.replaced_by_rank}` : "");
+                  return (
+                    <tr key={(r.app_id ?? "x") + i} style={{ borderBottom: "1px solid #f0f0f0" }}>
+                      <td style={{ padding: 8 }}>{r.date}</td>
+                      <td style={{ padding: 8 }}>{r.app_name}</td>
+                      <td style={{ padding: 8, whiteSpace: "nowrap" }}>{r.app_id}</td>
+                      <td style={{ padding: 8, color:
+                        r.status === "NEW" ? "#007AFF" :
+                        r.status === "DROPPED" ? "#cc0000" :
+                        r.status === "RE-ENTRY" ? "green" : "#555"
+                      }}>
+                        {r.status}
+                      </td>
+                      <td style={{ padding: 8, textAlign: "right" }}>{r.rank ?? "—"}</td>
+                      <td style={{ padding: 8 }}>{replacedName || "—"}</td>
+                      <td style={{ padding: 8 }}>{replacedNow || "—"}</td>
+                      <td style={{ padding: 8, textAlign: "right" }}>{r.previous_rank ?? "—"}</td>
+                      <td style={{ padding: 8, textAlign: "right" }}>{r.current_rank ?? "—"}</td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
