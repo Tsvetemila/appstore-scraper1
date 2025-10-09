@@ -496,3 +496,119 @@ def admin_refresh():
     latest = cur.fetchone()[0]
     con.close()
     return {"message": f"Refresh: {info.get('reason','done')}", "downloaded": info.get("downloaded", False), "latest_snapshot": latest}
+
+
+# ------------------------- 9) History View (Re-Entry Tracker) ----------------------------
+@app.get("/history")
+def history_view(
+    country: str = "US",
+    lookback_days: int = 7,
+    category: Optional[str] = None,
+    subcategory: Optional[str] = None,
+):
+    con = connect()
+    cur = con.cursor()
+
+    # Последните 7 snapshot дати
+    cur.execute("""
+        SELECT DISTINCT snapshot_date FROM charts
+        WHERE country=? AND chart_type='top_free'
+        ORDER BY snapshot_date DESC LIMIT ?
+    """, (country, lookback_days))
+    dates = [r[0] for r in cur.fetchall()]
+    if len(dates) < 2:
+        con.close()
+        return {"message": "Not enough data for history.", "results": []}
+
+    results = []
+    dates = sorted(dates)  # ascending order for timeline
+
+    for i in range(1, len(dates)):
+        prev_day, curr_day = dates[i - 1], dates[i]
+
+        # текущи и предишни данни
+        cur.execute("""
+            SELECT app_id, app_name, developer, rank
+            FROM charts
+            WHERE country=? AND chart_type='top_free' AND snapshot_date=?
+        """, (country, prev_day))
+        prev_rows = {r["app_id"]: dict(r) for r in cur.fetchall()}
+
+        cur.execute("""
+            SELECT app_id, app_name, developer, rank
+            FROM charts
+            WHERE country=? AND chart_type='top_free' AND snapshot_date=?
+        """, (country, curr_day))
+        curr_rows = {r["app_id"]: dict(r) for r in cur.fetchall()}
+
+        # текущи APP_ID-та
+        prev_ids, curr_ids = set(prev_rows.keys()), set(curr_rows.keys())
+
+        # нови
+        new_apps = curr_ids - prev_ids
+        for app_id in new_apps:
+            rank_now = curr_rows[app_id]["rank"]
+            replaced = next((p for p, d in prev_rows.items() if d["rank"] == rank_now), None)
+            replaced_name = prev_rows[replaced]["app_name"] if replaced else None
+            results.append({
+                "date": curr_day,
+                "status": "NEW",
+                "app_id": app_id,
+                "app_name": curr_rows[app_id]["app_name"],
+                "developer": curr_rows[app_id]["developer"],
+                "current_rank": rank_now,
+                "replaced_app": replaced_name,
+                "replaced_app_id": replaced,
+            })
+
+        # отпаднали
+        dropped_apps = prev_ids - curr_ids
+        for app_id in dropped_apps:
+            results.append({
+                "date": curr_day,
+                "status": "DROPPED",
+                "app_id": app_id,
+                "app_name": prev_rows[app_id]["app_name"],
+                "developer": prev_rows[app_id]["developer"],
+                "previous_rank": prev_rows[app_id]["rank"],
+            })
+
+        # върнали се (re-entry)
+        for app_id in curr_ids & prev_ids:
+            if app_id in dropped_apps:
+                continue
+            prev_rank = prev_rows[app_id]["rank"]
+            curr_rank = curr_rows[app_id]["rank"]
+            if prev_rank != curr_rank:
+                results.append({
+                    "date": curr_day,
+                    "status": "MOVED",
+                    "app_id": app_id,
+                    "app_name": curr_rows[app_id]["app_name"],
+                    "developer": curr_rows[app_id]["developer"],
+                    "previous_rank": prev_rank,
+                    "current_rank": curr_rank,
+                })
+
+        # търсим Re-entry (липсвал ден, после се е върнал)
+        if i > 1:
+            prev_prev_day = dates[i - 2]
+            cur.execute("""
+                SELECT app_id FROM charts
+                WHERE country=? AND chart_type='top_free' AND snapshot_date=?
+            """, (country, prev_prev_day))
+            prev_prev_ids = set(r[0] for r in cur.fetchall())
+            reentries = (curr_ids & prev_prev_ids) - prev_ids
+            for app_id in reentries:
+                rank_now = curr_rows[app_id]["rank"]
+                results.append({
+                    "date": curr_day,
+                    "status": "RE-ENTRY",
+                    "app_id": app_id,
+                    "app_name": curr_rows[app_id]["app_name"],
+                    "developer": curr_rows[app_id]["developer"],
+                    "current_rank": rank_now,
+                })
+
+    con.close()
+    return {"country": country, "days": dates, "total_events": len(results), "results": results}
