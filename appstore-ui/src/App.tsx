@@ -38,7 +38,7 @@ function StatusIcon({ row }: { row: CompareRow }) {
 }
 
 export default function App() {
-  const [tab, setTab] = useState<"compare" | "weekly">("compare");
+  const [tab, setTab] = useState<"compare" | "weekly" | "history">("compare");
 
   // meta
   const [countries, setCountries] = useState<string[]>([]);
@@ -54,6 +54,12 @@ export default function App() {
   // data
   const [rows, setRows] = useState<CompareRow[]>([]);
   const [weekly, setWeekly] = useState<{ new: WeeklyRow[]; dropped: WeeklyRow[] }>({ new: [], dropped: [] });
+
+  // history data + filters
+  const [historyRows, setHistoryRows] = useState<any[]>([]);
+  const [historyDates, setHistoryDates] = useState<string[]>([]);
+  const [historyDate, setHistoryDate] = useState<string>("");
+  const [historyStatus, setHistoryStatus] = useState<string>("all");
 
   // sort state (compare)
   const [sortAsc, setSortAsc] = useState<boolean>(true);
@@ -105,11 +111,23 @@ export default function App() {
     if (j.latest_snapshot) setLatestSnapshot(j.latest_snapshot);
   }
 
+  async function loadHistory() {
+    const qs = new URLSearchParams();
+    if (country) qs.set("country", country);
+    if (historyStatus !== "all") qs.set("status", historyStatus);
+    if (historyDate) qs.set("date", historyDate);
+    const r = await fetch(`${API}/history?${qs.toString()}`);
+    const j = await r.json();
+    setHistoryRows(j.results ?? []);
+    setHistoryDates(j.available_dates ?? []);
+  }
+
   useEffect(() => {
     if (!country) return;
     if (tab === "compare") loadCompare();
-    else loadWeekly();
-  }, [country, category, subcategory, tab]);
+    else if (tab === "weekly") loadWeekly();
+    else if (tab === "history") loadHistory();
+  }, [country, category, subcategory, tab, historyDate, historyStatus]);
 
   // derived – sorted compare rows
   const sortedRows = useMemo(() => {
@@ -140,6 +158,14 @@ export default function App() {
     qs.set("format", "csv");
     window.open(`${API}/compare?${qs.toString()}`, "_blank");
   }
+  function exportHistoryCSV() {
+    const qs = new URLSearchParams();
+    if (country) qs.set("country", country);
+    if (historyStatus !== "all") qs.set("status", historyStatus);
+    if (historyDate) qs.set("date", historyDate);
+    qs.set("export", "csv");
+    window.open(`${API}/history?${qs.toString()}`, "_blank");
+  }
 
   async function refreshDB() {
     try {
@@ -147,7 +173,9 @@ export default function App() {
       const j = await res.json();
       if (j.latest_snapshot) setLatestSnapshot(j.latest_snapshot);
       // reload current tab after refresh
-      tab === "compare" ? await loadCompare() : await loadWeekly();
+      if (tab === "compare") await loadCompare();
+      else if (tab === "weekly") await loadWeekly();
+      else await loadHistory();
       alert(j.message ?? "Refreshed");
     } catch {
       alert("Refresh failed.");
@@ -190,6 +218,17 @@ export default function App() {
         >
           Weekly Report
         </button>
+        <button
+          style={{
+            background: tab === "history" ? "#007AFF" : "#dadde1",
+            color: tab === "history" ? "#fff" : "#111",
+            padding: "6px 14px",
+            borderRadius: 6,
+          }}
+          onClick={() => setTab("history")}
+        >
+          History View
+        </button>
       </div>
 
       {/* Filters + actions */}
@@ -229,7 +268,9 @@ export default function App() {
           Reset
         </button>
 
-        <button onClick={() => (tab === "compare" ? loadCompare() : loadWeekly())}>Reload</button>
+        <button onClick={() => (tab === "compare" ? loadCompare() : tab === "weekly" ? loadWeekly() : loadHistory())}>
+          Reload
+        </button>
 
         <button onClick={refreshDB} style={{ display: "inline-flex", gap: 6 }}>
           🔄 Refresh DB
@@ -240,8 +281,12 @@ export default function App() {
           <button onClick={exportCompareCSV} style={{ background: "#28a745", color: "white", padding: "4px 10px", borderRadius: 6 }}>
             Export CSV
           </button>
-        ) : (
+        ) : tab === "weekly" ? (
           <button onClick={exportWeeklyCSV} style={{ background: "#28a745", color: "white", padding: "4px 10px", borderRadius: 6 }}>
+            Export CSV
+          </button>
+        ) : (
+          <button onClick={exportHistoryCSV} style={{ background: "#28a745", color: "white", padding: "4px 10px", borderRadius: 6 }}>
             Export CSV
           </button>
         )}
@@ -259,6 +304,7 @@ export default function App() {
             <thead style={{ background: "#f7f7f7" }}>
               <tr>
                 <th style={{ textAlign: "left", padding: 8 }}>App</th>
+                <th style={{ textAlign: "left", padding: 8 }}>App ID</th>
                 <th style={{ textAlign: "left", padding: 8 }}>Country</th>
                 <th style={{ textAlign: "left", padding: 8 }}>Category</th>
                 <th style={{ textAlign: "left", padding: 8 }}>Subcategory</th>
@@ -278,6 +324,7 @@ export default function App() {
               {sortedRows.map((r, i) => (
                 <tr key={r.app_id + i} style={{ borderBottom: "1px solid #f0f0f0" }}>
                   <td style={{ padding: 8 }}>{r.app_name}</td>
+                  <td style={{ padding: 8, whiteSpace: "nowrap" }}>{r.app_id}</td>
                   <td style={{ padding: 8 }}>{r.country}</td>
                   <td style={{ padding: 8 }}>{r.category}</td>
                   <td style={{ padding: 8 }}>{r.subcategory ?? "—"}</td>
@@ -307,6 +354,7 @@ export default function App() {
                   <tr>
                     <th style={{ textAlign: "right", padding: 6 }}>Rank</th>
                     <th style={{ textAlign: "left", padding: 6 }}>App</th>
+                    <th style={{ textAlign: "left", padding: 6 }}>App ID</th>
                     <th style={{ textAlign: "left", padding: 6 }}>Developer</th>
                   </tr>
                 </thead>
@@ -315,6 +363,7 @@ export default function App() {
                     <tr key={a.app_id + i}>
                       <td style={{ textAlign: "right", padding: 6 }}>{a.rank ?? "—"}</td>
                       <td style={{ padding: 6 }}>{a.app_name}</td>
+                      <td style={{ padding: 6, whiteSpace: "nowrap" }}>{a.app_id}</td>
                       <td style={{ padding: 6 }}>{a.developer_name}</td>
                     </tr>
                   ))}
@@ -331,6 +380,7 @@ export default function App() {
                   <tr>
                     <th style={{ textAlign: "right", padding: 6 }}>Rank</th>
                     <th style={{ textAlign: "left", padding: 6 }}>App</th>
+                    <th style={{ textAlign: "left", padding: 6 }}>App ID</th>
                     <th style={{ textAlign: "left", padding: 6 }}>Developer</th>
                   </tr>
                 </thead>
@@ -339,12 +389,100 @@ export default function App() {
                     <tr key={a.app_id + i}>
                       <td style={{ textAlign: "right", padding: 6 }}>{a.rank ?? "—"}</td>
                       <td style={{ padding: 6 }}>{a.app_name}</td>
+                      <td style={{ padding: 6, whiteSpace: "nowrap" }}>{a.app_id}</td>
                       <td style={{ padding: 6 }}>{a.developer_name}</td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* History View */}
+      {tab === "history" && (
+        <div style={{ marginTop: 20 }}>
+          <h3>📆 History View (Re-Entry Tracker)</h3>
+
+          {/* History Filters */}
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 12 }}>
+            <select value={historyStatus} onChange={(e) => setHistoryStatus(e.target.value)}>
+              <option value="all">All statuses</option>
+              <option value="NEW">NEW</option>
+              <option value="DROPPED">DROPPED</option>
+              <option value="MOVED">MOVED</option>
+              <option value="RE-ENTRY">RE-ENTRY</option>
+            </select>
+
+            <select value={historyDate} onChange={(e) => setHistoryDate(e.target.value)}>
+              <option value="">All dates</option>
+              {historyDates.map((d) => (
+                <option key={d} value={d}>
+                  {d}
+                </option>
+              ))}
+            </select>
+
+            <button onClick={loadHistory}>Reload</button>
+
+            <button
+              onClick={exportHistoryCSV}
+              style={{ background: "#28a745", color: "white", padding: "4px 10px", borderRadius: 6 }}
+            >
+              Export CSV
+            </button>
+          </div>
+
+          {/* Table */}
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", border: "1px solid #eee" }}>
+              <thead style={{ background: "#f7f7f7" }}>
+                <tr>
+                  <th style={{ textAlign: "left", padding: 8 }}>Date</th>
+                  <th style={{ textAlign: "left", padding: 8 }}>App</th>
+                  <th style={{ textAlign: "left", padding: 8 }}>App ID</th>
+                  <th style={{ textAlign: "left", padding: 8 }}>Status</th>
+                  <th style={{ textAlign: "right", padding: 8 }}>Rank</th>
+                  <th style={{ textAlign: "right", padding: 8 }}>Prev Rank</th>
+                  <th style={{ textAlign: "right", padding: 8 }}>Curr Rank</th>
+                </tr>
+              </thead>
+              <tbody>
+                {historyRows.length === 0 && (
+                  <tr>
+                    <td colSpan={7} style={{ padding: 8, textAlign: "center", color: "#777" }}>
+                      No data for selected filters.
+                    </td>
+                  </tr>
+                )}
+                {historyRows.map((r: any, i: number) => (
+                  <tr key={(r.app_id ?? "x") + i} style={{ borderBottom: "1px solid #f0f0f0" }}>
+                    <td style={{ padding: 8 }}>{r.date}</td>
+                    <td style={{ padding: 8 }}>{r.app_name}</td>
+                    <td style={{ padding: 8, whiteSpace: "nowrap" }}>{r.app_id}</td>
+                    <td
+                      style={{
+                        padding: 8,
+                        color:
+                          r.status === "NEW"
+                            ? "#007AFF"
+                            : r.status === "DROPPED"
+                            ? "#cc0000"
+                            : r.status === "RE-ENTRY"
+                            ? "green"
+                            : "#555",
+                      }}
+                    >
+                      {r.status}
+                    </td>
+                    <td style={{ padding: 8, textAlign: "right" }}>{r.rank ?? "—"}</td>
+                    <td style={{ padding: 8, textAlign: "right" }}>{r.previous_rank ?? "—"}</td>
+                    <td style={{ padding: 8, textAlign: "right" }}>{r.current_rank ?? "—"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         </div>
       )}
