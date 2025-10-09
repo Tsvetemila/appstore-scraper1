@@ -498,6 +498,7 @@ def admin_refresh():
     return {"message": f"Refresh: {info.get('reason','done')}", "downloaded": info.get("downloaded", False), "latest_snapshot": latest}
 
 
+
 # ------------------------- 9) History View (Re-Entry Tracker) ----------------------------
 @app.get("/history")
 def history_view(
@@ -627,4 +628,15 @@ def history_view(
             writer.writerow([
                 r.get("date"), r.get("status"), r.get("app_id"),
                 r.get("app_name"), r.get("rank") or "",
-                r.get("previous_rank")_
+                r.get("previous_rank") or "", r.get("current_rank") or ""
+            ])
+        return Response(content=output.getvalue(), media_type="text/csv")
+
+    # 5️⃣ JSON output
+    return {
+        "country": country,
+        "available_dates": dates,
+        "filters": {"date": date, "status": status},
+        "total_events": len(results),
+        "results": results
+    }
