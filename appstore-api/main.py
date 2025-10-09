@@ -501,67 +501,71 @@ def admin_refresh():
 # ------------------------- 9) History View (Re-Entry Tracker) ----------------------------
 @app.get("/history")
 def history_view(
-    country: str = "US",
-    lookback_days: int = 7,
-    category: Optional[str] = None,
-    subcategory: Optional[str] = None,
+    country: Optional[str] = Query(None, description="Country code (e.g. US, FR)"),
+    lookback_days: int = Query(7, description="How many days back to compare"),
+    date: Optional[str] = Query(None, description="Filter by specific snapshot_date (YYYY-MM-DD)"),
+    status: Optional[str] = Query(None, description="Filter by status: NEW, DROPPED, RE-ENTRY, MOVED"),
+    export: Optional[str] = Query(None, description="Set to csv for CSV export"),
 ):
     con = connect()
     cur = con.cursor()
 
-    # Последните 7 snapshot дати
-    cur.execute("""
+    # 1️⃣ Последни snapshot дати
+    where_country = "WHERE chart_type='top_free'"
+    params = []
+    if country:
+        where_country += " AND country=?"
+        params.append(country)
+
+    cur.execute(f"""
         SELECT DISTINCT snapshot_date FROM charts
-        WHERE country=? AND chart_type='top_free'
+        {where_country}
         ORDER BY snapshot_date DESC LIMIT ?
-    """, (country, lookback_days))
+    """, (*params, lookback_days))
     dates = [r[0] for r in cur.fetchall()]
     if len(dates) < 2:
         con.close()
         return {"message": "Not enough data for history.", "results": []}
 
     results = []
-    dates = sorted(dates)  # ascending order for timeline
+    dates = sorted(dates)
 
+    # 2️⃣ Ден по ден сравнение
     for i in range(1, len(dates)):
         prev_day, curr_day = dates[i - 1], dates[i]
 
-        # текущи и предишни данни
         cur.execute("""
-            SELECT app_id, app_name, developer, rank
+            SELECT app_id, app_name, rank
             FROM charts
-            WHERE country=? AND chart_type='top_free' AND snapshot_date=?
-        """, (country, prev_day))
+            WHERE chart_type='top_free' AND snapshot_date=?""" +
+            (" AND country=?" if country else ""),
+            ((prev_day, country) if country else (prev_day,))
+        )
         prev_rows = {r["app_id"]: dict(r) for r in cur.fetchall()}
 
         cur.execute("""
-            SELECT app_id, app_name, developer, rank
+            SELECT app_id, app_name, rank
             FROM charts
-            WHERE country=? AND chart_type='top_free' AND snapshot_date=?
-        """, (country, curr_day))
+            WHERE chart_type='top_free' AND snapshot_date=?""" +
+            (" AND country=?" if country else ""),
+            ((curr_day, country) if country else (curr_day,))
+        )
         curr_rows = {r["app_id"]: dict(r) for r in cur.fetchall()}
 
-        # текущи APP_ID-та
         prev_ids, curr_ids = set(prev_rows.keys()), set(curr_rows.keys())
 
-        # нови
+        # NEW
         new_apps = curr_ids - prev_ids
         for app_id in new_apps:
-            rank_now = curr_rows[app_id]["rank"]
-            replaced = next((p for p, d in prev_rows.items() if d["rank"] == rank_now), None)
-            replaced_name = prev_rows[replaced]["app_name"] if replaced else None
             results.append({
                 "date": curr_day,
                 "status": "NEW",
                 "app_id": app_id,
                 "app_name": curr_rows[app_id]["app_name"],
-                "developer": curr_rows[app_id]["developer"],
-                "current_rank": rank_now,
-                "replaced_app": replaced_name,
-                "replaced_app_id": replaced,
+                "rank": curr_rows[app_id]["rank"],
             })
 
-        # отпаднали
+        # DROPPED
         dropped_apps = prev_ids - curr_ids
         for app_id in dropped_apps:
             results.append({
@@ -569,14 +573,11 @@ def history_view(
                 "status": "DROPPED",
                 "app_id": app_id,
                 "app_name": prev_rows[app_id]["app_name"],
-                "developer": prev_rows[app_id]["developer"],
-                "previous_rank": prev_rows[app_id]["rank"],
+                "rank": prev_rows[app_id]["rank"],
             })
 
-        # върнали се (re-entry)
-        for app_id in curr_ids & prev_ids:
-            if app_id in dropped_apps:
-                continue
+        # MOVED
+        for app_id in (curr_ids & prev_ids):
             prev_rank = prev_rows[app_id]["rank"]
             curr_rank = curr_rows[app_id]["rank"]
             if prev_rank != curr_rank:
@@ -585,30 +586,45 @@ def history_view(
                     "status": "MOVED",
                     "app_id": app_id,
                     "app_name": curr_rows[app_id]["app_name"],
-                    "developer": curr_rows[app_id]["developer"],
                     "previous_rank": prev_rank,
                     "current_rank": curr_rank,
                 })
 
-        # търсим Re-entry (липсвал ден, после се е върнал)
+        # RE-ENTRY
         if i > 1:
             prev_prev_day = dates[i - 2]
             cur.execute("""
                 SELECT app_id FROM charts
-                WHERE country=? AND chart_type='top_free' AND snapshot_date=?
-            """, (country, prev_prev_day))
+                WHERE chart_type='top_free' AND snapshot_date=?""" +
+                (" AND country=?" if country else ""),
+                ((prev_prev_day, country) if country else (prev_prev_day,))
+            )
             prev_prev_ids = set(r[0] for r in cur.fetchall())
             reentries = (curr_ids & prev_prev_ids) - prev_ids
             for app_id in reentries:
-                rank_now = curr_rows[app_id]["rank"]
                 results.append({
                     "date": curr_day,
                     "status": "RE-ENTRY",
                     "app_id": app_id,
                     "app_name": curr_rows[app_id]["app_name"],
-                    "developer": curr_rows[app_id]["developer"],
-                    "current_rank": rank_now,
+                    "rank": curr_rows[app_id]["rank"],
                 })
 
     con.close()
-    return {"country": country, "days": dates, "total_events": len(results), "results": results}
+
+    # 3️⃣ Филтри
+    if date:
+        results = [r for r in results if r["date"] == date]
+    if status:
+        results = [r for r in results if r["status"].lower() == status.lower()]
+
+    # 4️⃣ CSV export
+    if export and export.lower() == "csv":
+        output = io.StringIO()
+        writer = csv.writer(output)
+        writer.writerow(["date", "status", "app_id", "app_name", "rank", "previous_rank", "current_rank"])
+        for r in results:
+            writer.writerow([
+                r.get("date"), r.get("status"), r.get("app_id"),
+                r.get("app_name"), r.get("rank") or "",
+                r.get("previous_rank")_
