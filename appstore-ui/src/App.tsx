@@ -1,3 +1,4 @@
+
 import React, { useEffect, useMemo, useState } from "react";
 
 /* ----------------------------- Types ----------------------------- */
@@ -24,7 +25,6 @@ type WeeklyInsightRow = {
   country: string;
   category: string | null;
   subcategory: string | null;
-  // ако бекендът върне и тези полета – ще ги визуализираме:
   last_week_rank?: number | null;
   rank_delta?: number | null; // положително = нагоре
 };
@@ -38,6 +38,21 @@ type WeeklyMoverRow = {
   country: string;
   category: string | null;
   subcategory: string | null;
+};
+
+type HistoryRow = {
+  date: string;
+  country: string;
+  app_name: string;
+  app_id: string;
+  status: "NEW" | "DROPPED" | "RE-ENTRY" | string;
+  rank: number | null;
+  replaced_app_name?: string | null;
+  replaced_by_app_name?: string | null;
+  replaced_current_rank?: number | null;
+  replaced_by_rank?: number | null;
+  previous_rank?: number | null;
+  current_rank?: number | null;
 };
 
 const API = "https://appstore-api.onrender.com";
@@ -59,12 +74,13 @@ function chip(color: string, text: string) {
     <span
       style={{
         display: "inline-block",
-        padding: "2px 8px",
+        padding: "3px 10px",
         borderRadius: 999,
         background: color,
         color: "#fff",
         fontSize: 12,
         lineHeight: "18px",
+        fontWeight: 600
       }}
     >
       {text}
@@ -84,10 +100,10 @@ function sectionCard(children: React.ReactNode) {
     <div
       style={{
         background: "#fff",
-        border: "1px solid #eaeaea",
+        border: "1px solid #e6e8ef",
         borderRadius: 12,
-        boxShadow: "0 1px 2px rgba(0,0,0,0.04)",
-        padding: 12,
+        boxShadow: "0 1px 2px rgba(0,0,0,0.05)",
+        padding: 14,
       }}
     >
       {children}
@@ -97,37 +113,94 @@ function sectionCard(children: React.ReactNode) {
 
 function tableStyles() {
   return {
+    wrap: { overflowX: "auto" as const },
     table: {
       width: "100%",
       borderCollapse: "separate" as const,
       borderSpacing: 0,
       background: "#fff",
-      border: "1px solid #eee",
+      border: "1px solid #e6e8ef",
       borderRadius: 12,
       overflow: "hidden",
+      fontSize: 14,
     },
+    thead: {},
     th: {
+      position: "sticky" as const,
+      top: 0,
       textAlign: "left" as const,
-      padding: 10,
-      fontWeight: 600,
-      fontSize: 13,
-      background: "#f7f8fa",
-      borderBottom: "1px solid #eee",
+      padding: "12px 12px",
+      fontWeight: 700,
+      fontSize: 14,
+      background: "#f4f6fb",
+      borderBottom: "1px solid #e6e8ef",
       whiteSpace: "nowrap" as const,
+      zIndex: 1,
+      cursor: "pointer" as const,
+      userSelect: "none" as const,
+    },
+    thStatic: {
+      position: "sticky" as const,
+      top: 0,
+      textAlign: "left" as const,
+      padding: "12px 12px",
+      fontWeight: 700,
+      fontSize: 14,
+      background: "#f4f6fb",
+      borderBottom: "1px solid #e6e8ef",
+      whiteSpace: "nowrap" as const,
+      zIndex: 1,
+      userSelect: "none" as const,
     },
     td: {
-      padding: 10,
-      fontSize: 13,
-      borderBottom: "1px solid #f3f3f3",
+      padding: "12px 12px",
+      fontSize: 14,
+      borderBottom: "1px solid #f1f2f7",
       verticalAlign: "middle" as const,
+    },
+    tr: (i: number, status?: "NEW" | "RE-ENTRY") => ({
+      background:
+        status === "NEW"
+          ? "#f0f7ff"
+          : status === "RE-ENTRY"
+          ? "#f0fff4"
+          : i % 2
+          ? "#fcfcff"
+          : "#fff",
+      transition: "background 120ms ease",
+    }),
+    hover: {
+      background: "#eef3ff",
     },
   };
 }
 
-function rowBgByStatus(s?: "NEW" | "RE-ENTRY") {
-  if (s === "NEW") return "#f0f7ff"; // леко синьо
-  if (s === "RE-ENTRY") return "#f0fff4"; // леко зелено
-  return undefined;
+function sortIcon(asc?: boolean, active?: boolean) {
+  if (!active) return "↕";
+  return asc ? "↑" : "↓";
+}
+
+function compareValues(a: any, b: any, asc: boolean) {
+  // normalize undefined/null
+  const na = a === null || typeof a === "undefined";
+  const nb = b === null || typeof b === "undefined";
+  if (na && nb) return 0;
+  if (na) return 1;
+  if (nb) return -1;
+  // numeric
+  if (typeof a === "number" && typeof b === "number") {
+    return asc ? a - b : b - a;
+  }
+  // try parse numbers from strings like "#12", "12"
+  const pa = Number(String(a).replace(/[^\d.-]/g, ""));
+  const pb = Number(String(b).replace(/[^\d.-]/g, ""));
+  if (!Number.isNaN(pa) && !Number.isNaN(pb) && (String(a).match(/\d/) || String(b).match(/\d/))) {
+    return asc ? pa - pb : pb - pa;
+  }
+  // strings
+  return asc
+    ? String(a).localeCompare(String(b))
+    : String(b).localeCompare(String(a));
 }
 
 function StatusIcon({ row }: { row: CompareRow }) {
@@ -162,61 +235,54 @@ export default function App() {
   const [category, setCategory] = useState<string>("all");
   const [subcategory, setSubcategory] = useState<string>("all");
 
-  // Compare данни
+  // Compare данни + сортиране
   const [rows, setRows] = useState<CompareRow[]>([]);
-  const [sortAsc, setSortAsc] = useState<boolean>(true);
+  const [cmpSortKey, setCmpSortKey] = useState<keyof CompareRow | "delta" | "current_rank" | "previous_rank">("current_rank");
+  const [cmpSortAsc, setCmpSortAsc] = useState<boolean>(true);
 
   // Weekly – вътрешни табове и филтри (самостоятелни за изгледа)
-  const [weeklyInnerTab, setWeeklyInnerTab] = useState<"insights" | "movers">(
-    "insights"
-  );
+  const [weeklyInnerTab, setWeeklyInnerTab] = useState<"insights" | "movers">("insights");
   const [weeklyRows, setWeeklyRows] = useState<WeeklyInsightRow[]>([]);
   const [moverRows, setMoverRows] = useState<WeeklyMoverRow[]>([]);
   const [weeklyStart, setWeeklyStart] = useState<string | null>(null);
   const [weeklyEnd, setWeeklyEnd] = useState<string | null>(null);
-  const [weeklyCounts, setWeeklyCounts] = useState<{
-    NEW: number;
-    RE_ENTRY: number;
-  } | null>(null);
+  const [weeklyCounts, setWeeklyCounts] = useState<{ NEW: number; RE_ENTRY: number } | null>(null);
 
   // вътрешни филтри
   const [weeklyCountry, setWeeklyCountry] = useState<string>(country);
   const [weeklyCategory, setWeeklyCategory] = useState<string>("all");
   const [weeklySubcategory, setWeeklySubcategory] = useState<string>("all");
-  const [weeklyStatus, setWeeklyStatus] = useState<"all" | "NEW" | "RE-ENTRY">(
-    "all"
-  );
-  const [weeklySortByStatusAsc, setWeeklySortByStatusAsc] = useState(true);
+  const [weeklyStatus, setWeeklyStatus] = useState<"all" | "NEW" | "RE-ENTRY">("all");
 
-  // History – отделни филтри и данни
-  const [historyRows, setHistoryRows] = useState<any[]>([]);
+  // сортиране за Weekly Insights & Movers
+  const [insSortKey, setInsSortKey] = useState<keyof WeeklyInsightRow | "rank_delta">("rank");
+  const [insSortAsc, setInsSortAsc] = useState<boolean>(true);
+  const [movSortKey, setMovSortKey] = useState<keyof WeeklyMoverRow | "rank_delta">("rank_delta");
+  const [movSortAsc, setMovSortAsc] = useState<boolean>(false);
+
+  // History – отделни филтри и данни + сортиране
+  const [historyRows, setHistoryRows] = useState<HistoryRow[]>([]);
   const [historyDates, setHistoryDates] = useState<string[]>([]);
   const [historyDate, setHistoryDate] = useState<string>("");
   const [historyStatus, setHistoryStatus] = useState<string>("all");
   const [historyCountry, setHistoryCountry] = useState<string>("US");
   const [historyCategory, setHistoryCategory] = useState<string>("all");
   const [historySubcategory, setHistorySubcategory] = useState<string>("all");
-  const [historySubcatOptions, setHistorySubcatOptions] = useState<string[]>(
-    []
-  );
+  const [historySubcatOptions, setHistorySubcatOptions] = useState<string[]>([]);
+  const [hisSortKey, setHisSortKey] = useState<keyof HistoryRow | "previous_rank" | "current_rank">("date");
+  const [hisSortAsc, setHisSortAsc] = useState<boolean>(false);
 
   /* -------------------------- Loaders & Meta -------------------------- */
 
   async function loadMeta(selectedCategory?: string) {
-    const res = await fetch(
-      `${API}/meta${
-        selectedCategory ? `?category=${encodeURIComponent(selectedCategory)}` : ""
-      }`
-    );
+    const res = await fetch(`${API}/meta${selectedCategory ? `?category=${encodeURIComponent(selectedCategory)}` : ""}`);
     const m = await res.json();
     setCountries(m.countries ?? []);
     setCategories(m.categories ?? []);
     setSubcategories(m.subcategories ?? []);
     if ((m.countries ?? []).length > 0 && !countries.length) setCountry(m.countries[0]);
   }
-  useEffect(() => {
-    loadMeta().catch(() => {});
-  }, []);
+  useEffect(() => { loadMeta().catch(() => {}); }, []);
 
   useEffect(() => {
     // глобални – презареждаме подкатегории при смяна на категорията
@@ -290,13 +356,10 @@ export default function App() {
       if (weeklyInnerTab === "insights") loadWeeklyInsights();
       else loadWeeklyMovers();
     } else if (tab === "history") loadHistory();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab]);
 
   // Reactivity for filters
-  useEffect(() => {
-    if (tab === "compare") loadCompare();
-  }, [country, category, subcategory, tab]);
+  useEffect(() => { if (tab === "compare") loadCompare(); }, [country, category, subcategory, tab]);
 
   useEffect(() => {
     if (tab === "weekly") {
@@ -317,32 +380,33 @@ export default function App() {
     setHistorySubcategory("all");
   }, [historyCategory]);
 
-  useEffect(() => {
-    if (tab === "history") loadHistory();
-  }, [historyCountry, historyCategory, historySubcategory, historyStatus, historyDate, tab]);
+  useEffect(() => { if (tab === "history") loadHistory(); }, [historyCountry, historyCategory, historySubcategory, historyStatus, historyDate, tab]);
 
   /* -------------------------- Derived / Sorting -------------------------- */
 
   const sortedCompare = useMemo(() => {
     const data = [...rows];
-    data.sort((a, b) => {
-      const va = a.current_rank ?? Number.POSITIVE_INFINITY;
-      const vb = b.current_rank ?? Number.POSITIVE_INFINITY;
-      return sortAsc ? va - vb : vb - va;
-    });
+    data.sort((a: any, b: any) => compareValues(a[cmpSortKey as any], b[cmpSortKey as any], cmpSortAsc));
     return data;
-  }, [rows, sortAsc]);
+  }, [rows, cmpSortKey, cmpSortAsc]);
 
   const sortedWeeklyInsights = useMemo(() => {
-    // сортиране по статус (NEW преди RE-ENTRY) при клик по колоната
-    const order = (s: "NEW" | "RE-ENTRY") => (s === "NEW" ? 0 : 1);
     const arr = [...weeklyRows];
-    arr.sort((a, b) => {
-      if (weeklySortByStatusAsc) return order(a.status) - order(b.status);
-      else return order(b.status) - order(a.status);
-    });
+    arr.sort((a: any, b: any) => compareValues(a[insSortKey as any], b[insSortKey as any], insSortAsc));
     return arr;
-  }, [weeklyRows, weeklySortByStatusAsc]);
+  }, [weeklyRows, insSortKey, insSortAsc]);
+
+  const sortedMovers = useMemo(() => {
+    const arr = [...moverRows];
+    arr.sort((a: any, b: any) => compareValues(a[movSortKey as any], b[movSortKey as any], movSortAsc));
+    return arr;
+  }, [moverRows, movSortKey, movSortAsc]);
+
+  const sortedHistory = useMemo(() => {
+    const arr = [...historyRows];
+    arr.sort((a: any, b: any) => compareValues(a[hisSortKey as any], b[hisSortKey as any], hisSortAsc));
+    return arr;
+  }, [historyRows, hisSortKey, hisSortAsc]);
 
   /* -------------------------- Export helpers -------------------------- */
 
@@ -353,8 +417,7 @@ export default function App() {
     if (weeklySubcategory !== "all") qs.set("subcategory", weeklySubcategory);
     if (weeklyStatus !== "all" && weeklyInnerTab === "insights") qs.set("status", weeklyStatus);
     qs.set("format", "csv");
-    const path =
-      weeklyInnerTab === "insights" ? "/weekly/insights" : "/weekly/trending";
+    const path = weeklyInnerTab === "insights" ? "/weekly/insights" : "/weekly/trending";
     window.open(`${API}${path}?${qs.toString()}`, "_blank");
   }
 
@@ -399,54 +462,58 @@ export default function App() {
 
   const T = tableStyles();
 
+  const headerBtn = (active: boolean) => ({
+    background: active ? "#007AFF" : "#e6e9ef",
+    color: active ? "#fff" : "#111",
+    padding: "8px 14px",
+    borderRadius: 10,
+    border: "1px solid #d9dce3",
+    fontWeight: 700 as const
+  });
+
+  const actionBtn = {
+    padding: "8px 12px",
+    borderRadius: 8,
+    border: "1px solid #d9dce3",
+    background: "#eef1f7",
+    cursor: "pointer",
+  } as React.CSSProperties;
+
+  const exportBtn = {
+    ...actionBtn,
+    background: "#28a745",
+    color: "#fff",
+    border: "1px solid #1f8e39",
+  };
+
   return (
     <div
       style={{
         fontFamily: "Inter, system-ui, Arial",
-        padding: 16,
+        padding: 18,
         maxWidth: 1400,
         margin: "0 auto",
-        background: "#fafafa",
+        background: "#f7f9fc",
+        color: "#0f172a",
       }}
     >
-      <h1 style={{ margin: "6px 0 14px" }}>📊 App Store Dashboard</h1>
+      <style>{`
+        table tr:hover { background: #eef3ff !important; }
+      `}</style>
+
+      <h1 style={{ margin: "6px 0 14px", fontSize: 28, display: "flex", alignItems: "center", gap: 10 }}>
+        <span>📊</span> <span>App Store Dashboard</span>
+      </h1>
 
       {/* Tabs */}
       <div style={{ display: "flex", gap: 10, marginBottom: 14, flexWrap: "wrap" }}>
-        <button
-          style={{
-            background: tab === "compare" ? "#007AFF" : "#e6e9ef",
-            color: tab === "compare" ? "#fff" : "#111",
-            padding: "8px 14px",
-            borderRadius: 8,
-            border: "1px solid #d9dce3",
-          }}
-          onClick={() => setTab("compare")}
-        >
+        <button style={headerBtn(tab === "compare")} onClick={() => setTab("compare")}>
           Compare View
         </button>
-        <button
-          style={{
-            background: tab === "weekly" ? "#007AFF" : "#e6e9ef",
-            color: tab === "weekly" ? "#fff" : "#111",
-            padding: "8px 14px",
-            borderRadius: 8,
-            border: "1px solid #d9dce3",
-          }}
-          onClick={() => setTab("weekly")}
-        >
+        <button style={headerBtn(tab === "weekly")} onClick={() => setTab("weekly")}>
           Weekly View
         </button>
-        <button
-          style={{
-            background: tab === "history" ? "#007AFF" : "#e6e9ef",
-            color: tab === "history" ? "#fff" : "#111",
-            padding: "8px 14px",
-            borderRadius: 8,
-            border: "1px solid #d9dce3",
-          }}
-          onClick={() => setTab("history")}
-        >
+        <button style={headerBtn(tab === "history")} onClick={() => setTab("history")}>
           History View
         </button>
       </div>
@@ -456,130 +523,84 @@ export default function App() {
         <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
           <strong style={{ marginRight: 6 }}>Global filters (Compare)</strong>
           <select value={country} onChange={(e) => setCountry(e.target.value)}>
-            {countries.map((c) => (
-              <option key={c} value={c}>{c}</option>
-            ))}
+            {countries.map((c) => (<option key={c} value={c}>{c}</option>))}
           </select>
 
           <select value={category} onChange={(e) => setCategory(e.target.value)}>
             <option value="all">All categories</option>
-            {categories.map((c) => (
-              <option key={c} value={c}>{c}</option>
-            ))}
+            {categories.map((c) => (<option key={c} value={c}>{c}</option>))}
           </select>
 
           <select value={subcategory} onChange={(e) => setSubcategory(e.target.value)}>
             <option value="all">All subcategories</option>
-            {subcategories.map((s) => (
-              <option key={s} value={s}>{s}</option>
-            ))}
+            {subcategories.map((s) => (<option key={s} value={s}>{s}</option>))}
           </select>
 
-          <button
-            onClick={() => {
-              setCategory("all");
-              setSubcategory("all");
-            }}
-          >
-            Reset
-          </button>
+          <button style={actionBtn} onClick={() => { setCategory("all"); setSubcategory("all"); }}>Reset</button>
+          <button style={actionBtn} onClick={() => (tab === "compare" ? loadCompare() : tab === "weekly" ? (weeklyInnerTab === "insights" ? loadWeeklyInsights() : loadWeeklyMovers()) : loadHistory())}>Reload</button>
 
-          <button onClick={() => (tab === "compare" ? loadCompare() : tab === "weekly" ? (weeklyInnerTab === "insights" ? loadWeeklyInsights() : loadWeeklyMovers()) : loadHistory())}>
-            Reload
-          </button>
-
-          <button onClick={refreshDB} style={{ display: "inline-flex", gap: 6 }}>
-            🔄 Refresh DB
-          </button>
+          <button onClick={refreshDB} style={{ ...actionBtn, display: "inline-flex", gap: 6 }}>🔄 Refresh DB</button>
 
           {tab === "compare" ? (
-            <button
-              onClick={exportCompareCSV}
-              style={{ background: "#28a745", color: "white", padding: "6px 10px", borderRadius: 8 }}
-            >
-              Export CSV
-            </button>
+            <button onClick={exportCompareCSV} style={exportBtn}>Export CSV</button>
           ) : tab === "weekly" ? (
-            <button
-              onClick={exportWeeklyCSV}
-              style={{ background: "#28a745", color: "white", padding: "6px 10px", borderRadius: 8 }}
-            >
-              Export CSV
-            </button>
+            <button onClick={exportWeeklyCSV} style={exportBtn}>Export CSV</button>
           ) : (
-            <button
-              onClick={exportHistoryCSV}
-              style={{ background: "#28a745", color: "white", padding: "6px 10px", borderRadius: 8 }}
-            >
-              Export CSV
-            </button>
+            <button onClick={exportHistoryCSV} style={exportBtn}>Export CSV</button>
           )}
         </div>
       )}
 
       {/* Last updated */}
-      <div style={{ margin: "10px 0 14px", color: "#555" }}>
+      <div style={{ margin: "10px 0 14px", color: "#475569", fontSize: 14 }}>
         Data last updated: <b>{latestSnapshot ?? "N/A"}</b>
       </div>
 
       {/* ------------------------------ Compare ------------------------------ */}
       {tab === "compare" &&
         sectionCard(
-          <div style={{ overflowX: "auto" }}>
+          <div style={T.wrap}>
             <table style={T.table as any}>
-              <thead>
+              <thead style={T.thead as any}>
                 <tr>
-                  <th style={T.th}>App</th>
-                  <th style={T.th}>App ID</th>
-                  <th style={T.th}>Country</th>
-                  <th style={T.th}>Category</th>
-                  <th style={T.th}>Subcategory</th>
-                  <th
-                    style={{ ...T.th, textAlign: "right", cursor: "pointer" }}
-                    onClick={() => setSortAsc((s) => !s)}
-                    title="Sort by current rank"
-                  >
-                    Current {sortAsc ? "↑" : "↓"}
-                  </th>
-                  <th style={{ ...T.th, textAlign: "right" }}>Previous (avg 7d)</th>
-                  <th style={{ ...T.th, textAlign: "right" }}>Δ</th>
-                  <th style={{ ...T.th, textAlign: "center" }}>Status</th>
+                  {([
+                    ["app_name","App"],
+                    ["app_id","App ID"],
+                    ["country","Country"],
+                    ["category","Category"],
+                    ["subcategory","Subcategory"],
+                    ["current_rank","Current"],
+                    ["previous_rank","Previous (avg 7d)"],
+                    ["delta","Δ"],
+                    ["status","Status"],
+                  ] as [keyof CompareRow | "delta" | "current_rank" | "previous_rank", string][]).map(([key, label]) => (
+                    <th
+                      key={String(key)}
+                      style={key === "status" ? T.thStatic : T.th}
+                      onClick={() => {
+                        setCmpSortAsc(key === cmpSortKey ? !cmpSortAsc : true);
+                        setCmpSortKey(key);
+                      }}
+                    >
+                      {label} {sortIcon(cmpSortAsc, cmpSortKey === key)}
+                    </th>
+                  ))}
                 </tr>
               </thead>
               <tbody>
                 {sortedCompare.map((r, i) => (
-                  <tr
-                    key={r.app_id + i}
-                    style={{ background: i % 2 ? "#fcfcfc" : "#fff" }}
-                  >
+                  <tr key={r.app_id + i} style={T.tr(i) as any}>
                     <td style={T.td}>{r.app_name}</td>
                     <td style={{ ...T.td, whiteSpace: "nowrap" }}>{r.app_id}</td>
                     <td style={T.td}>{r.country}</td>
                     <td style={T.td}>{r.category}</td>
                     <td style={T.td}>{r.subcategory ?? "—"}</td>
-                    <td style={{ ...T.td, textAlign: "right" }}>
-                      {r.current_rank ?? "—"}
-                    </td>
-                    <td style={{ ...T.td, textAlign: "right" }}>
-                      {r.previous_rank ?? "—"}
-                    </td>
-                    <td
-                      style={{
-                        ...T.td,
-                        textAlign: "right",
-                        color:
-                          (r.delta ?? 0) > 0
-                            ? "green"
-                            : (r.delta ?? 0) < 0
-                            ? "#cc0000"
-                            : undefined,
-                      }}
-                    >
+                    <td style={{ ...T.td, textAlign: "right" }}>{r.current_rank ?? "—"}</td>
+                    <td style={{ ...T.td, textAlign: "right" }}>{r.previous_rank ?? "—"}</td>
+                    <td style={{ ...T.td, textAlign: "right", color: (r.delta ?? 0) > 0 ? "green" : (r.delta ?? 0) < 0 ? "#cc0000" : undefined }}>
                       {r.delta ?? "—"}
                     </td>
-                    <td style={{ ...T.td, textAlign: "center" }}>
-                      <StatusIcon row={r} />
-                    </td>
+                    <td style={{ ...T.td, textAlign: "center" }}><StatusIcon row={r} /></td>
                   </tr>
                 ))}
               </tbody>
@@ -594,175 +615,83 @@ export default function App() {
             <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
               <h3 style={{ margin: 0 }}>
                 WEEKLY INSIGHTS —{" "}
-                <span style={{ fontWeight: 400 }}>
-                  (Week of {formatWeekRange(weeklyStart, weeklyEnd)})
-                </span>
+                <span style={{ fontWeight: 400 }}>(Week of {formatWeekRange(weeklyStart, weeklyEnd)})</span>
               </h3>
 
               {/* вътрешни табове като бутони */}
               <div style={{ marginLeft: "auto", display: "flex", gap: 6 }}>
-                <button
-                  onClick={() => setWeeklyInnerTab("insights")}
-                  style={{
-                    padding: "6px 10px",
-                    borderRadius: 8,
-                    background:
-                      weeklyInnerTab === "insights" ? "#007AFF" : "#e6e9ef",
-                    color: weeklyInnerTab === "insights" ? "#fff" : "#111",
-                    border: "1px solid #d9dce3",
-                  }}
-                >
-                  🆕 New & Re-Entry
-                </button>
-                <button
-                  onClick={() => setWeeklyInnerTab("movers")}
-                  style={{
-                    padding: "6px 10px",
-                    borderRadius: 8,
-                    background:
-                      weeklyInnerTab === "movers" ? "#007AFF" : "#e6e9ef",
-                    color: weeklyInnerTab === "movers" ? "#fff" : "#111",
-                    border: "1px solid #d9dce3",
-                  }}
-                >
-                  📈 Top Movers
-                </button>
+                <button onClick={() => setWeeklyInnerTab("insights")} style={headerBtn(weeklyInnerTab === "insights")}>🆕 New & Re-Entry</button>
+                <button onClick={() => setWeeklyInnerTab("movers")} style={headerBtn(weeklyInnerTab === "movers")}>📈 Top Movers</button>
               </div>
             </div>
 
             {/* вътрешни филтри */}
-            <div
-              style={{
-                display: "flex",
-                flexWrap: "wrap",
-                gap: 8,
-                alignItems: "center",
-                marginBottom: 12,
-                background: "#f5f7fb",
-                border: "1px solid #e7ebf3",
-                padding: 8,
-                borderRadius: 8,
-              }}
-            >
-              <select
-                value={weeklyCountry}
-                onChange={(e) => setWeeklyCountry(e.target.value)}
-              >
-                {countries.map((c) => (
-                  <option key={c} value={c}>
-                    {c}
-                  </option>
-                ))}
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center", marginBottom: 12, background: "#f5f7fb", border: "1px solid #e7ebf3", padding: 8, borderRadius: 8 }}>
+              <select value={weeklyCountry} onChange={(e) => setWeeklyCountry(e.target.value)}>
+                {countries.map((c) => (<option key={c} value={c}>{c}</option>))}
               </select>
-              <select
-                value={weeklyCategory}
-                onChange={(e) => setWeeklyCategory(e.target.value)}
-              >
+              <select value={weeklyCategory} onChange={(e) => setWeeklyCategory(e.target.value)}>
                 <option value="all">All categories</option>
-                {categories.map((c) => (
-                  <option key={c} value={c}>
-                    {c}
-                  </option>
-                ))}
+                {categories.map((c) => (<option key={c} value={c}>{c}</option>))}
               </select>
-              <select
-                value={weeklySubcategory}
-                onChange={(e) => setWeeklySubcategory(e.target.value)}
-              >
+              <select value={weeklySubcategory} onChange={(e) => setWeeklySubcategory(e.target.value)}>
                 <option value="all">All subcategories</option>
-                {subcategories.map((s) => (
-                  <option key={s} value={s}>
-                    {s}
-                  </option>
-                ))}
+                {subcategories.map((s) => (<option key={s} value={s}>{s}</option>))}
               </select>
 
-              {/* статус филтър има смисъл само в Insights таба */}
               {weeklyInnerTab === "insights" && (
-                <select
-                  value={weeklyStatus}
-                  onChange={(e) => setWeeklyStatus(e.target.value as any)}
-                >
+                <select value={weeklyStatus} onChange={(e) => setWeeklyStatus(e.target.value as any)}>
                   <option value="all">All statuses</option>
                   <option value="NEW">NEW</option>
                   <option value="RE-ENTRY">RE-ENTRY</option>
                 </select>
               )}
 
-              <button
-                onClick={() =>
-                  weeklyInnerTab === "insights"
-                    ? loadWeeklyInsights()
-                    : loadWeeklyMovers()
-                }
-              >
+              <button style={actionBtn} onClick={() => weeklyInnerTab === "insights" ? loadWeeklyInsights() : loadWeeklyMovers()}>
                 Reload
               </button>
-              <button onClick={exportWeeklyCSV}>Export CSV</button>
+              <button style={exportBtn} onClick={exportWeeklyCSV}>Export CSV</button>
             </div>
 
             {weeklyInnerTab === "insights" ? (
               <>
                 <div style={{ marginBottom: 6, color: "#555" }}>
                   Showing: <b>{weeklyStatus === "all" ? "All" : weeklyStatus}</b>
-                  {weeklyCounts && (
-                    <span style={{ marginLeft: 12 }}>
-                      NEW: <b>{weeklyCounts.NEW}</b> • RE-ENTRY:{" "}
-                      <b>{weeklyCounts.RE_ENTRY}</b>
-                    </span>
-                  )}
+                  {weeklyCounts && (<span style={{ marginLeft: 12 }}>NEW: <b>{weeklyCounts.NEW}</b> • RE-ENTRY: <b>{weeklyCounts.RE_ENTRY}</b></span>)}
                 </div>
 
-                <div style={{ overflowX: "auto" }}>
+                <div style={T.wrap}>
                   <table style={T.table as any}>
                     <thead>
                       <tr>
-                        <th style={{ ...T.th, textAlign: "right" }}>Rank</th>
-                        <th style={T.th}>App</th>
-                        <th style={T.th}>App ID</th>
-                        <th style={T.th}>Country</th>
-                        <th style={T.th}>Category</th>
-                        <th style={T.th}>Subcategory</th>
-                        <th
-                          style={{ ...T.th, cursor: "pointer" }}
-                          onClick={() =>
-                            setWeeklySortByStatusAsc((s) => !s)
-                          }
-                          title="Sort by Status"
-                        >
-                          Status {weeklySortByStatusAsc ? "↑" : "↓"}
-                        </th>
-                        <th style={T.th}>Δ Rank (vs last week)</th>
-                        <th style={T.th}>First seen</th>
+                        {[
+                          ["rank","Rank"],
+                          ["app_name","App"],
+                          ["app_id","App ID"],
+                          ["country","Country"],
+                          ["category","Category"],
+                          ["subcategory","Subcategory"],
+                          ["status","Status"],
+                          ["rank_delta","Δ Rank (vs last week)"],
+                          ["first_seen_date","First seen"]
+                        ].map(([key,label]) => (
+                          <th key={key} style={key==="status"? T.thStatic : T.th} onClick={() => {
+                            const k = key as any;
+                            setInsSortAsc(k === insSortKey ? !insSortAsc : (k==="rank_delta" ? false : true));
+                            setInsSortKey(k);
+                          }}>
+                            {label} {sortIcon(insSortAsc, insSortKey === key)}
+                          </th>
+                        ))}
                       </tr>
                     </thead>
                     <tbody>
                       {sortedWeeklyInsights.length === 0 && (
-                        <tr>
-                          <td
-                            colSpan={9}
-                            style={{
-                              textAlign: "center",
-                              padding: 12,
-                              color: "#777",
-                            }}
-                          >
-                            No data for selected filters.
-                          </td>
-                        </tr>
+                        <tr><td colSpan={9} style={{ textAlign: "center", padding: 12, color: "#777" }}>No data for selected filters.</td></tr>
                       )}
                       {sortedWeeklyInsights.map((r, i) => (
-                        <tr
-                          key={r.app_id + i}
-                          style={{
-                            background:
-                              rowBgByStatus(r.status) ||
-                              (i % 2 ? "#fcfcfc" : "#fff"),
-                          }}
-                        >
-                          <td style={{ ...T.td, textAlign: "right" }}>
-                            {r.rank ?? "—"}
-                          </td>
+                        <tr key={r.app_id + i} style={T.tr(i, r.status) as any}>
+                          <td style={{ ...T.td, textAlign: "right" }}>{r.rank ?? "—"}</td>
                           <td style={T.td}>{r.app_name}</td>
                           <td style={T.td}>{r.app_id}</td>
                           <td style={T.td}>{r.country}</td>
@@ -771,16 +700,9 @@ export default function App() {
                           <td style={T.td}>{statusChip(r.status)}</td>
                           <td style={T.td}>
                             {typeof r.rank_delta === "number"
-                              ? r.rank_delta > 0
-                                ? `↑ +${r.rank_delta}`
-                                : r.rank_delta < 0
-                                ? `↓ ${r.rank_delta}`
-                                : "—"
+                              ? r.rank_delta > 0 ? `↑ +${r.rank_delta}` : r.rank_delta < 0 ? `↓ ${r.rank_delta}` : "—"
                               : r.last_week_rank != null && r.rank != null
-                              ? (() => {
-                                  const d = (r.last_week_rank ?? 0) - (r.rank ?? 0);
-                                  return d > 0 ? `↑ +${d}` : d < 0 ? `↓ ${d}` : "—";
-                                })()
+                              ? (() => { const d = (r.last_week_rank ?? 0) - (r.rank ?? 0); return d > 0 ? `↑ +${d}` : d < 0 ? `↓ ${d}` : "—"; })()
                               : "—"}
                           </td>
                           <td style={T.td}>{r.first_seen_date}</td>
@@ -791,49 +713,44 @@ export default function App() {
                 </div>
               </>
             ) : (
-              /* Top Movers */
-              <div style={{ overflowX: "auto" }}>
+              <div style={T.wrap}>
                 <table style={T.table as any}>
                   <thead>
                     <tr>
-                      <th style={{ ...T.th, textAlign: "right" }}>Rank</th>
-                      <th style={T.th}>Δ Rank (vs last week)</th>
-                      <th style={T.th}>App</th>
-                      <th style={T.th}>App ID</th>
-                      <th style={T.th}>Country</th>
-                      <th style={T.th}>Category</th>
-                      <th style={T.th}>Subcategory</th>
+                      {[
+                        ["rank","Rank"],
+                        ["rank_delta","Δ Rank (vs last week)"],
+                        ["app_name","App"],
+                        ["app_id","App ID"],
+                        ["country","Country"],
+                        ["category","Category"],
+                        ["subcategory","Subcategory"],
+                      ].map(([key,label]) => (
+                        <th key={key} style={T.th} onClick={() => {
+                          const k = key as any;
+                          setMovSortAsc(k === movSortKey ? !movSortAsc : (k==="rank_delta" ? false : true));
+                          setMovSortKey(k);
+                        }}>
+                          {label} {sortIcon(movSortAsc, movSortKey === key)}
+                        </th>
+                      ))}
                     </tr>
                   </thead>
                   <tbody>
-                    {moverRows.length === 0 && (
-                      <tr>
-                        <td colSpan={7} style={{ textAlign: "center", padding: 12, color: "#777" }}>
-                          No data (trending endpoint).
-                        </td>
-                      </tr>
+                    {sortedMovers.length === 0 && (
+                      <tr><td colSpan={7} style={{ textAlign: "center", padding: 12, color: "#777" }}>No data (trending endpoint).</td></tr>
                     )}
-                    {[...moverRows]
-                      .sort((a, b) => (b.rank_delta ?? 0) - (a.rank_delta ?? 0))
-                      .map((r, i) => (
-                        <tr key={r.app_id + i} style={{ background: i % 2 ? "#fcfcfc" : "#fff" }}>
-                          <td style={{ ...T.td, textAlign: "right" }}>{r.rank ?? "—"}</td>
-                          <td style={T.td}>
-                            {typeof r.rank_delta === "number"
-                              ? r.rank_delta > 0
-                                ? `↑ +${r.rank_delta}`
-                                : r.rank_delta < 0
-                                ? `↓ ${r.rank_delta}`
-                                : "—"
-                              : "—"}
-                          </td>
-                          <td style={T.td}>{r.app_name}</td>
-                          <td style={T.td}>{r.app_id}</td>
-                          <td style={T.td}>{r.country}</td>
-                          <td style={T.td}>{r.category ?? "—"}</td>
-                          <td style={T.td}>{r.subcategory ?? "—"}</td>
-                        </tr>
-                      ))}
+                    {sortedMovers.map((r, i) => (
+                      <tr key={r.app_id + i} style={T.tr(i) as any}>
+                        <td style={{ ...T.td, textAlign: "right" }}>{r.rank ?? "—"}</td>
+                        <td style={T.td}>{typeof r.rank_delta === "number" ? (r.rank_delta > 0 ? `↑ +${r.rank_delta}` : r.rank_delta < 0 ? `↓ ${r.rank_delta}` : "—") : "—"}</td>
+                        <td style={T.td}>{r.app_name}</td>
+                        <td style={T.td}>{r.app_id}</td>
+                        <td style={T.td}>{r.country}</td>
+                        <td style={T.td}>{r.category ?? "—"}</td>
+                        <td style={T.td}>{r.subcategory ?? "—"}</td>
+                      </tr>
+                    ))}
                   </tbody>
                 </table>
               </div>
@@ -848,156 +765,97 @@ export default function App() {
             <h3 style={{ marginTop: 0 }}>📆 History View (Re-Entry Tracker)</h3>
 
             {/* History Filters */}
-            <div
-              style={{
-                display: "flex",
-                flexWrap: "wrap",
-                gap: 8,
-                marginBottom: 12,
-                background: "#f5f7fb",
-                border: "1px solid #e7ebf3",
-                padding: 8,
-                borderRadius: 8,
-              }}
-            >
-              <select
-                value={historyCountry}
-                onChange={(e) => setHistoryCountry(e.target.value)}
-              >
-                {countries.map((c) => (
-                  <option key={c} value={c}>
-                    {c}
-                  </option>
-                ))}
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 12, background: "#f5f7fb", border: "1px solid #e7ebf3", padding: 8, borderRadius: 8 }}>
+              <select value={historyCountry} onChange={(e) => setHistoryCountry(e.target.value)}>
+                {countries.map((c) => (<option key={c} value={c}>{c}</option>))}
               </select>
 
-              <select
-                value={historyCategory}
-                onChange={(e) => setHistoryCategory(e.target.value)}
-              >
+              <select value={historyCategory} onChange={(e) => setHistoryCategory(e.target.value)}>
                 <option value="all">All categories</option>
-                {categories.map((c) => (
-                  <option key={c} value={c}>
-                    {c}
-                  </option>
+                {categories.map((c) => (<option key={c} value={c}>{c}</option>))}
+              </select>
+
+              <select value={historySubcategory} onChange={(e) => setHistorySubcategory(e.target.value)}>
+                <option value="all">All subcategories</option>
+                {(historySubcatOptions.length ? historySubcatOptions : subcategories).map((s) => (
+                  <option key={s} value={s}>{s}</option>
                 ))}
               </select>
 
-              <select
-                value={historySubcategory}
-                onChange={(e) => setHistorySubcategory(e.target.value)}
-              >
-                <option value="all">All subcategories</option>
-                {(historySubcatOptions.length ? historySubcatOptions : subcategories).map(
-                  (s) => (
-                    <option key={s} value={s}>
-                      {s}
-                    </option>
-                  )
-                )}
-              </select>
-
-              <select
-                value={historyStatus}
-                onChange={(e) => setHistoryStatus(e.target.value)}
-              >
+              <select value={historyStatus} onChange={(e) => setHistoryStatus(e.target.value)}>
                 <option value="all">All statuses</option>
                 <option value="NEW">NEW</option>
                 <option value="DROPPED">DROPPED</option>
                 <option value="RE-ENTRY">RE-ENTRY</option>
               </select>
 
-              <select
-                value={historyDate}
-                onChange={(e) => setHistoryDate(e.target.value)}
-              >
+              <select value={historyDate} onChange={(e) => setHistoryDate(e.target.value)}>
                 <option value="">All dates</option>
-                {historyDates.map((d) => (
-                  <option key={d} value={d}>
-                    {d}
-                  </option>
-                ))}
+                {historyDates.map((d) => (<option key={d} value={d}>{d}</option>))}
               </select>
 
-              <button
-                onClick={() => {
-                  setHistoryCategory("all");
-                  setHistorySubcategory("all");
-                  setHistoryStatus("all");
-                  setHistoryDate("");
-                }}
-              >
-                Reset
-              </button>
-              <button onClick={loadHistory}>Reload</button>
+              <button style={actionBtn} onClick={() => { setHistoryCategory("all"); setHistorySubcategory("all"); setHistoryStatus("all"); setHistoryDate(""); }}>Reset</button>
+              <button style={actionBtn} onClick={loadHistory}>Reload</button>
 
-              <button
-                onClick={exportHistoryCSV}
-                style={{
-                  background: "#28a745",
-                  color: "white",
-                  padding: "6px 10px",
-                  borderRadius: 8,
-                }}
-              >
-                Export CSV
-              </button>
+              <button onClick={exportHistoryCSV} style={exportBtn}>Export CSV</button>
             </div>
 
             {/* Table */}
-            <div style={{ overflowX: "auto" }}>
+            <div style={T.wrap}>
               <table style={T.table as any}>
                 <thead>
                   <tr>
-                    <th style={T.th}>Date</th>
-                    <th style={T.th}>Country</th>
-                    <th style={T.th}>App</th>
-                    <th style={T.th}>App ID</th>
-                    <th style={T.th}>Status</th>
-                    <th style={{ ...T.th, textAlign: "right" }}>Rank</th>
-                    <th style={T.th}>Replaced ↔ By</th>
-                    <th style={T.th}>Replaced Now</th>
-                    <th style={{ ...T.th, textAlign: "right" }}>Prev Rank</th>
-                    <th style={{ ...T.th, textAlign: "right" }}>Curr Rank</th>
+                    {[
+                      ["date","Date"],
+                      ["country","Country"],
+                      ["app_name","App"],
+                      ["app_id","App ID"],
+                      ["status","Status"],
+                      ["rank","Rank"],
+                      ["replaced_app_name","Replaced ↔ By"],
+                      ["replaced_current_rank","Replaced Now"],
+                      ["previous_rank","Prev Rank"],
+                      ["current_rank","Curr Rank"],
+                    ].map(([key,label]) => (
+                      <th key={key} style={key==="status"? T.thStatic : T.th} onClick={() => {
+                        const k = key as any;
+                        setHisSortAsc(k === hisSortKey ? !hisSortAsc : true);
+                        setHisSortKey(k);
+                      }}>{label} {sortIcon(hisSortAsc, hisSortKey === key)}</th>
+                    ))}
                   </tr>
                 </thead>
                 <tbody>
-                  {historyRows.length === 0 && (
-                    <tr>
-                      <td
-                        colSpan={10}
-                        style={{ padding: 12, textAlign: "center", color: "#777" }}
-                      >
-                        No data for selected filters.
-                      </td>
-                    </tr>
+                  {sortedHistory.length === 0 && (
+                    <tr><td colSpan={10} style={{ padding: 12, textAlign: "center", color: "#777" }}>No data for selected filters.</td></tr>
                   )}
-                  {historyRows.map((r: any, i: number) => {
-                    const replacedName =
-                      r.status === "NEW"
-                        ? r.replaced_app_name
-                        : r.status === "DROPPED"
-                        ? r.replaced_by_app_name
-                        : "";
-                    const replacedNow =
-                      r.status === "NEW"
-                        ? r.replaced_current_rank
-                          ? `now #${r.replaced_current_rank}`
-                          : r.replaced_status === "DROPPED"
-                          ? "dropped"
-                          : ""
-                        : r.status === "DROPPED" && r.replaced_by_rank
-                        ? `rank #${r.replaced_by_rank}`
-                        : "";
+                  {sortedHistory.map((r: HistoryRow, i: number) => {
+                    // Unified logic for "who was replaced"
+                    // For NEW: replaced_app_name / replaced_current_rank (already supported)
+                    // For DROPPED: replaced_by_app_name / replaced_by_rank (already supported)
+                    // For RE-ENTRY: try to use any provided fields as backend support improves
+                    let replacedName = "";
+                    let replacedNow = "";
+
+                    if (r.status === "NEW") {
+                      replacedName = r.replaced_app_name || "";
+                      replacedNow = r.replaced_current_rank ? `now #${r.replaced_current_rank}` : (r as any).replaced_status === "DROPPED" ? "dropped" : "";
+                    } else if (r.status === "DROPPED") {
+                      replacedName = r.replaced_by_app_name || "";
+                      replacedNow = r.replaced_by_rank ? `rank #${r.replaced_by_rank}` : "";
+                    } else if (r.status === "RE-ENTRY") {
+                      // NEW ADDITION: show whose place it took upon return if backend provides it
+                      replacedName = r.replaced_app_name || r.replaced_by_app_name || "";
+                      replacedNow = r.replaced_current_rank ? `now #${r.replaced_current_rank}` : r.replaced_by_rank ? `rank #${r.replaced_by_rank}` : "";
+                    }
+
                     return (
-                      <tr key={(r.app_id ?? "x") + i} style={{ background: i % 2 ? "#fcfcfc" : "#fff" }}>
+                      <tr key={(r.app_id ?? "x") + i} style={T.tr(i) as any}>
                         <td style={T.td}>{r.date}</td>
                         <td style={T.td}>{r.country}</td>
                         <td style={T.td}>{r.app_name}</td>
                         <td style={{ ...T.td, whiteSpace: "nowrap" }}>{r.app_id}</td>
-                        <td style={{ ...T.td }}>
-                          {statusChip(r.status)}
-                        </td>
+                        <td style={{ ...T.td }}>{statusChip(r.status)}</td>
                         <td style={{ ...T.td, textAlign: "right" }}>{r.rank ?? "—"}</td>
                         <td style={T.td}>{replacedName || "—"}</td>
                         <td style={T.td}>{replacedNow || "—"}</td>
