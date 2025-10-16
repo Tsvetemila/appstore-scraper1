@@ -355,7 +355,7 @@ def compare_weekly_full(
                 prev_data[app_id] = {
                     "ranks": [],
                     "app_name": row["app_name"],
-                    "developer_name": row["developer"],
+                    "developer_name": row["developer_name"],
                     "category": row["category"],
                     "subcategory": row["subcategory"],
                 }
@@ -405,7 +405,7 @@ def compare_weekly_full(
             results.append({
                 "app_id": app_id,
                 "app_name": pdata["app_name"],
-                "developer_name": pdata["developer"],
+                "developer_name": pdata["developer_name"],
                 "category": pdata["category"],
                 "subcategory": pdata["subcategory"],
                 "current_rank": None,
