@@ -654,54 +654,50 @@ def history_view(
         "results": results
     }
 
-# ------------------------- X) Weekly Insights (New, Re-Entry & Dropped for last week) ---------------
+# ------------------------- Weekly Insights (NEW / RE-ENTRY / DROPPED) -----------------------
 @app.get("/weekly/insights")
 def weekly_insights(
     country: str = "US",
     category: Optional[str] = Query(None),
     subcategory: Optional[str] = Query(None),
     lookback_days: int = 7,
-    status: Optional[str] = Query(None, description="Filter by status: NEW, RE-ENTRY, DROPPED"),
+    status: Optional[str] = Query(None),   # <-- използва се за филтъра от фронтенда
     format: Optional[str] = Query(None),
 ):
     """
-    Weekly logic:
-    - NEW: app never appeared before in entire DB.
-    - RE-ENTRY: app appeared before (in DB), not in previous week, but appears now.
-    - DROPPED: app was present in previous week but not in current week.
+    NEW      = app никога не е присъствал в базата ПРЕДИ ТАЗИ седмица.
+    RE-ENTRY = app е присъствал някога преди, НЕ е бил в миналата седмица, но е в текущата.
+    DROPPED  = app е бил миналата седмица, но го няма в текущата.
     """
-    con = connect()
-    cur = con.cursor()
-
+    con = connect(); cur = con.cursor()
     where_base, params_base = _where({"country": country, "category": category, "subcategory": subcategory})
 
-    # this week
+    # Текуща седмица (последните N уникални дати)
     cur.execute(f"""
         SELECT DISTINCT snapshot_date FROM charts
         WHERE {where_base}
         ORDER BY snapshot_date DESC LIMIT ?
     """, (*params_base, lookback_days))
-    week_dates_desc = [r[0] for r in cur.fetchall()]
-    if not week_dates_desc:
+    week_desc = [r[0] for r in cur.fetchall()]
+    if not week_desc:
         con.close()
-        return {"message": "No snapshots", "rows": [], "counts": {}, "week_start": None, "week_end": None}
+        return {"rows": [], "counts": {}, "week_start": None, "week_end": None}
 
-    week_dates = sorted(week_dates_desc)
+    week_dates = sorted(week_desc)
     week_start, week_end = week_dates[0], week_dates[-1]
 
-    # previous week (same length)
+    # Минала седмица (същия брой дати преди start-а)
     cur.execute(f"""
         SELECT DISTINCT snapshot_date FROM charts
         WHERE {where_base} AND snapshot_date < ?
         ORDER BY snapshot_date DESC LIMIT ?
     """, (*params_base, week_start, lookback_days))
-    prev_dates_desc = [r[0] for r in cur.fetchall()]
-    prev_dates = sorted(prev_dates_desc)
+    prev_dates = sorted([r[0] for r in cur.fetchall()])
 
-    # current week apps
+    # Данни за текущата седмица
     placeholders_week = ",".join(["?"] * len(week_dates))
     cur.execute(f"""
-        SELECT app_id, app_name, developer, category, subcategory, rank, country, bundle_id
+        SELECT app_id, app_name, developer, bundle_id, category, subcategory, rank
         FROM charts
         WHERE {where_base} AND snapshot_date IN ({placeholders_week})
     """, (*params_base, *week_dates))
@@ -709,8 +705,10 @@ def weekly_insights(
     for r in cur.fetchall():
         a = dict(r)
         week_apps[a["app_id"]] = a
+    week_ids = set(week_apps.keys())
 
-    # previous week apps
+    # App-и от миналата седмица
+    prev_ids = set()
     if prev_dates:
         placeholders_prev = ",".join(["?"] * len(prev_dates))
         cur.execute(f"""
@@ -718,81 +716,75 @@ def weekly_insights(
             WHERE {where_base} AND snapshot_date IN ({placeholders_prev})
         """, (*params_base, *prev_dates))
         prev_ids = {r[0] for r in cur.fetchall() if r[0]}
-    else:
-        prev_ids = set()
 
-    # all-time apps
-    cur.execute(f"SELECT DISTINCT app_id FROM charts WHERE {where_base}", (*params_base,))
-    all_ids = {r[0] for r in cur.fetchall() if r[0]}
-
-    week_ids = set(week_apps.keys())
+    # ⚠️ ALL-TIME ПРЕДИ ТАЗИ СЕДМИЦА (това е ключът за NEW)
+    cur.execute(f"""
+        SELECT DISTINCT app_id FROM charts
+        WHERE {where_base} AND snapshot_date < ?
+    """, (*params_base, week_start))
+    all_before_ids = {r[0] for r in cur.fetchall() if r[0]}
 
     rows = []
     counts = {"NEW": 0, "RE-ENTRY": 0, "DROPPED": 0}
 
-    # NEW + RE-ENTRY
-    for app_id in week_ids:
-        existed_before = app_id in all_ids and app_id not in prev_ids
-        if app_id not in all_ids:
+    # NEW & RE-ENTRY
+    for app_id, info in week_apps.items():
+        if app_id not in all_before_ids:
             st = "NEW"
-        elif existed_before:
+        elif app_id in all_before_ids and app_id not in prev_ids:
             st = "RE-ENTRY"
         else:
             continue
         counts[st] += 1
-        a = week_apps[app_id]
         rows.append({
-            "app_id": app_id,
-            "app_name": a["app_name"],
-            "developer_name": a.get("developer") or "",
-            "bundle_id": a.get("bundle_id") or "",
-            "rank": a["rank"],
-            "category": a["category"],
-            "subcategory": a["subcategory"],
             "status": st,
+            "rank": info["rank"],
+            "app_id": app_id,
+            "app_name": info["app_name"],
+            "developer_name": info.get("developer") or "",
+            "bundle_id": info.get("bundle_id") or "",
+            "category": info["category"],
+            "subcategory": info["subcategory"],
         })
 
-    # DROPPED
+    # DROPPED (миналата седмица -> тази седмица го няма)
     dropped_ids = prev_ids - week_ids
     if dropped_ids:
         placeholders_drop = ",".join(["?"] * len(dropped_ids))
         cur.execute(f"""
-            SELECT DISTINCT app_id, app_name, developer, category, subcategory, country, bundle_id
+            SELECT app_id, app_name, developer, bundle_id, category, subcategory
             FROM charts WHERE app_id IN ({placeholders_drop})
+            GROUP BY app_id
         """, (*dropped_ids,))
         for r in cur.fetchall():
             rows.append({
+                "status": "DROPPED",
+                "rank": None,
                 "app_id": r["app_id"],
                 "app_name": r["app_name"],
-                "developer_name": r["developer"],
-                "bundle_id": r.get("bundle_id") or "",
-                "rank": None,
+                "developer_name": r["developer"] or "",
+                "bundle_id": r["bundle_id"] or "",
                 "category": r["category"],
                 "subcategory": r["subcategory"],
-                "status": "DROPPED",
             })
         counts["DROPPED"] = len(dropped_ids)
 
     con.close()
+    counts["ALL"] = len(rows)
 
+    # status филтър от фронтенда (ако е подаден)
     if status:
         rows = [r for r in rows if r["status"] == status.upper()]
 
     if (format or "").lower() == "csv":
-        out = io.StringIO()
-        w = csv.writer(out)
-        w.writerow(["status","app_id","app_name","developer_name","bundle_id","category","subcategory","rank"])
+        out = io.StringIO(); w = csv.writer(out)
+        w.writerow(["status","rank","app_id","app_name","developer_name","bundle_id","category","subcategory"])
         for r in rows:
-            w.writerow([
-                r["status"], r["app_id"], r["app_name"], r["developer_name"], r["bundle_id"],
-                r["category"], r["subcategory"], r["rank"]
-            ])
+            w.writerow([r["status"], r["rank"], r["app_id"], r["app_name"], r["developer_name"], r["bundle_id"], r["category"], r["subcategory"]])
         return Response(content=out.getvalue(), media_type="text/csv")
 
     return {
-        "week_start": week_start,
-        "week_end": week_end,
+        "week_start": week_start, "week_end": week_end,
         "counts": counts,
-        "total": len(rows),
         "rows": sorted(rows, key=lambda x: (x["rank"] is None, x["rank"] or 999)),
     }
