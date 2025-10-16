@@ -696,16 +696,17 @@ def weekly_insights(
 
     # Данни за текущата седмица
     placeholders_week = ",".join(["?"] * len(week_dates))
-    cur.execute(f"""
-        SELECT app_id, app_name, developer_name, bundle_id, category, subcategory, rank
-        FROM charts
-        WHERE {where_base} AND snapshot_date IN ({placeholders_week})
-    """, (*params_base, *week_dates))
-    week_apps = {}
-    for r in cur.fetchall():
-        a = dict(r)
-        week_apps[a["app_id"]] = a
-    week_ids = set(week_apps.keys())
+cur.execute(f"""
+    SELECT app_id, app_name, developer AS developer_name, '' AS bundle_id,
+           category, subcategory, rank
+    FROM charts
+    WHERE {where_base} AND snapshot_date IN ({placeholders_week})
+""", (*params_base, *week_dates))
+week_apps = {}
+for r in cur.fetchall():
+    a = dict(r)
+    week_apps[a["app_id"]] = a
+week_ids = set(week_apps.keys())
 
     # App-и от миналата седмица
     prev_ids = set()
