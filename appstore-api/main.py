@@ -654,29 +654,28 @@ def history_view(
         "results": results
     }
 
-# ------------------------- X) Weekly Insights (New & Re-Entry for last week) ---------------
+# ------------------------- X) Weekly Insights (New, Re-Entry & Dropped for last week) ---------------
 @app.get("/weekly/insights")
 def weekly_insights(
     country: str = "US",
     category: Optional[str] = Query(None),
     subcategory: Optional[str] = Query(None),
     lookback_days: int = 7,
-    status: Optional[str] = Query(None, description="Filter by status: NEW or RE-ENTRY"),
-    format: Optional[str] = Query(None),  # 'csv' for export
+    status: Optional[str] = Query(None, description="Filter by status: NEW, RE-ENTRY, DROPPED"),
+    format: Optional[str] = Query(None),
 ):
     """
-    Returns apps that appeared during the current week window (last N snapshot dates),
-    classified as NEW (never seen before week_start) or RE-ENTRY (seen before week_start
-    but not present in previous week). Apps that were already present in the previous week
-    are not included here.
+    Weekly logic:
+    - NEW: app never appeared before in entire DB.
+    - RE-ENTRY: app appeared before (in DB), not in previous week, but appears now.
+    - DROPPED: app was present in previous week but not in current week.
     """
     con = connect()
     cur = con.cursor()
 
-    # Base WHERE (chart_type + dims without dates)
     where_base, params_base = _where({"country": country, "category": category, "subcategory": subcategory})
 
-    # Get the last N distinct dates (this week window)
+    # this week
     cur.execute(f"""
         SELECT DISTINCT snapshot_date FROM charts
         WHERE {where_base}
@@ -685,102 +684,114 @@ def weekly_insights(
     week_dates_desc = [r[0] for r in cur.fetchall()]
     if not week_dates_desc:
         con.close()
-        return {
-            "message": "No snapshots for the selected filters.",
-            "rows": [],
-            "counts": {"NEW": 0, "RE-ENTRY": 0},
-            "week_start": None,
-            "week_end": None,
-        }
+        return {"message": "No snapshots", "rows": [], "counts": {}, "week_start": None, "week_end": None}
 
-    week_dates = sorted(week_dates_desc)  # chronological
+    week_dates = sorted(week_dates_desc)
     week_start, week_end = week_dates[0], week_dates[-1]
 
-    # Previous week (the N dates before week_start)
+    # previous week (same length)
     cur.execute(f"""
         SELECT DISTINCT snapshot_date FROM charts
         WHERE {where_base} AND snapshot_date < ?
         ORDER BY snapshot_date DESC LIMIT ?
     """, (*params_base, week_start, lookback_days))
     prev_dates_desc = [r[0] for r in cur.fetchall()]
-    prev_dates = set(prev_dates_desc)
+    prev_dates = sorted(prev_dates_desc)
 
-    # Collect current week entries (first-seen-in-week date + rank on that date)
+    # current week apps
     placeholders_week = ",".join(["?"] * len(week_dates))
     cur.execute(f"""
-        SELECT snapshot_date, app_id, app_name, rank, country, category, subcategory
+        SELECT app_id, app_name, developer, category, subcategory, rank, country, bundle_id
         FROM charts
         WHERE {where_base} AND snapshot_date IN ({placeholders_week})
     """, (*params_base, *week_dates))
+    week_apps = {}
+    for r in cur.fetchall():
+        a = dict(r)
+        week_apps[a["app_id"]] = a
 
-    week_seen: Dict[str, Dict[str, Any]] = {}
-    for row in cur.fetchall():
-        app_id = row[1]
-        if not app_id:
-            continue
-        if app_id not in week_seen:
-            week_seen[app_id] = {
-                "first_seen_date": row[0],
-                "rank": row[3],
-                "app_id": app_id,
-                "app_name": row[2],
-                "country": row[4],
-                "category": row[5],
-                "subcategory": row[6],
-            }
-
-    # Who was present in previous week?
+    # previous week apps
     if prev_dates:
         placeholders_prev = ",".join(["?"] * len(prev_dates))
         cur.execute(f"""
-            SELECT DISTINCT app_id
-            FROM charts
+            SELECT DISTINCT app_id FROM charts
             WHERE {where_base} AND snapshot_date IN ({placeholders_prev})
-        """, (*params_base, *list(prev_dates)))
-        prev_week_ids = {r[0] for r in cur.fetchall() if r[0]}
+        """, (*params_base, *prev_dates))
+        prev_ids = {r[0] for r in cur.fetchall() if r[0]}
     else:
-        prev_week_ids = set()
+        prev_ids = set()
 
-    # Classify NEW vs RE-ENTRY
-    rows: List[Dict[str, Any]] = []
-    counts = {"NEW": 0, "RE-ENTRY": 0}
+    # all-time apps
+    cur.execute(f"SELECT DISTINCT app_id FROM charts WHERE {where_base}", (*params_base,))
+    all_ids = {r[0] for r in cur.fetchall() if r[0]}
 
-    for app_id, info in week_seen.items():
-        if app_id in prev_week_ids:
+    week_ids = set(week_apps.keys())
+
+    rows = []
+    counts = {"NEW": 0, "RE-ENTRY": 0, "DROPPED": 0}
+
+    # NEW + RE-ENTRY
+    for app_id in week_ids:
+        existed_before = app_id in all_ids and app_id not in prev_ids
+        if app_id not in all_ids:
+            st = "NEW"
+        elif existed_before:
+            st = "RE-ENTRY"
+        else:
             continue
-
-        cur.execute(f"""
-            SELECT 1 FROM charts
-            WHERE {where_base} AND snapshot_date < ? AND app_id = ?
-            LIMIT 1
-        """, (*params_base, week_start, app_id))
-        existed_before = cur.fetchone() is not None
-
-        st = "RE-ENTRY" if existed_before else "NEW"
         counts[st] += 1
-        rows.append({**info, "status": st})
+        a = week_apps[app_id]
+        rows.append({
+            "app_id": app_id,
+            "app_name": a["app_name"],
+            "developer_name": a.get("developer") or "",
+            "bundle_id": a.get("bundle_id") or "",
+            "rank": a["rank"],
+            "category": a["category"],
+            "subcategory": a["subcategory"],
+            "status": st,
+        })
+
+    # DROPPED
+    dropped_ids = prev_ids - week_ids
+    if dropped_ids:
+        placeholders_drop = ",".join(["?"] * len(dropped_ids))
+        cur.execute(f"""
+            SELECT DISTINCT app_id, app_name, developer, category, subcategory, country, bundle_id
+            FROM charts WHERE app_id IN ({placeholders_drop})
+        """, (*dropped_ids,))
+        for r in cur.fetchall():
+            rows.append({
+                "app_id": r["app_id"],
+                "app_name": r["app_name"],
+                "developer_name": r["developer"],
+                "bundle_id": r.get("bundle_id") or "",
+                "rank": None,
+                "category": r["category"],
+                "subcategory": r["subcategory"],
+                "status": "DROPPED",
+            })
+        counts["DROPPED"] = len(dropped_ids)
 
     con.close()
 
     if status:
-        status_u = status.strip().upper()
-        rows = [r for r in rows if r["status"] == status_u]
+        rows = [r for r in rows if r["status"] == status.upper()]
 
     if (format or "").lower() == "csv":
-        output = io.StringIO()
-        w = csv.writer(output)
-        w.writerow(["country", "category", "subcategory", "status", "first_seen_date", "rank", "app", "app_id"])
-        for r in sorted(rows, key=lambda x: (x["rank"] is None, x["rank"] or 999)):
+        out = io.StringIO()
+        w = csv.writer(out)
+        w.writerow(["status","app_id","app_name","developer_name","bundle_id","category","subcategory","rank"])
+        for r in rows:
             w.writerow([
-                r.get("country"), r.get("category"), r.get("subcategory"), r.get("status"),
-                r.get("first_seen_date"), r.get("rank"), r.get("app_name"), r.get("app_id"),
+                r["status"], r["app_id"], r["app_name"], r["developer_name"], r["bundle_id"],
+                r["category"], r["subcategory"], r["rank"]
             ])
-        return Response(content=output.getvalue(), media_type="text/csv")
+        return Response(content=out.getvalue(), media_type="text/csv")
 
     return {
         "week_start": week_start,
         "week_end": week_end,
-        "latest_snapshot": week_end,
         "counts": counts,
         "total": len(rows),
         "rows": sorted(rows, key=lambda x: (x["rank"] is None, x["rank"] or 999)),
