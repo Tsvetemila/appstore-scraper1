@@ -1,17 +1,18 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { ArrowUp, ArrowDown, MinusCircle, PlusCircle, AlertCircle } from "lucide-react";
 
 /** API base */
 const API = (import.meta as any)?.env?.VITE_API_URL || "https://appstore-api.onrender.com";
 
-/* ------------------------------ UI helpers ------------------------------ */
-const pageBg = "#f3f4f6";
+/* ========================= UI Helpers / Style ========================= */
+const PAGE_BG = "#f5f6fa";
+const HOVER_BG = "#f1f1f1";
+
 const card = {
   background: "#ffffff",
   border: "1px solid #e5e7eb",
   borderRadius: 12,
-  padding: 14,
-  boxShadow: "0 2px 6px rgba(0,0,0,0.04)",
+  padding: 16,
+  boxShadow: "0 2px 8px rgba(0,0,0,0.05)",
 } as const;
 
 const btn = (active = false) =>
@@ -57,15 +58,15 @@ const pill = (bg: string, color = "#fff") =>
   } as const);
 
 function formatWeekLabel(a?: string | null, b?: string | null) {
-  if (!a || !b) return "WEEKLY INSIGHTS";
+  if (!a || !b) return "📊 WEEKLY INSIGHTS";
   const s = new Date(a);
   const e = new Date(b);
   const fmt = (d: Date, withYear = false) =>
     d.toLocaleDateString("en-US", { month: "short", day: "numeric", ...(withYear ? { year: "numeric" } : {}) });
-  return `WEEKLY INSIGHTS — (Week of ${fmt(s)}–${fmt(e, true)})`;
+  return `📊 WEEKLY INSIGHTS — (Week of ${fmt(s)}–${fmt(e, true)})`;
 }
 
-/* ------------------------------ Types ------------------------------ */
+/* ================================ Types ================================ */
 type CompareRow = {
   app_id: string;
   app_name: string;
@@ -85,7 +86,7 @@ type WeeklyRow = {
   app_name: string;
   developer_name: string;
   bundle_id: string;
-  country: string;
+  country?: string;
   category: string;
   subcategory: string;
 };
@@ -97,10 +98,11 @@ type WeeklyPayload = {
   rows: WeeklyRow[];
 };
 
+/* ================================ App ================================= */
 export default function App() {
-  /* ------------------------------ State ------------------------------ */
   const [tab, setTab] = useState<"compare" | "weekly">("compare");
 
+  // meta
   const [countries, setCountries] = useState<string[]>([]);
   const [categories, setCategories] = useState<string[]>([]);
   const [subcategories, setSubcategories] = useState<string[]>([]);
@@ -128,7 +130,7 @@ export default function App() {
   const [pageCompare, setPageCompare] = useState(1);
   const [pageWeekly, setPageWeekly] = useState(1);
 
-  /* ------------------------------ Loaders ------------------------------ */
+  /* ----------------------------- Loaders ----------------------------- */
   async function loadMeta(selCat?: string) {
     const res = await fetch(`${API}/meta${selCat && selCat !== "all" ? `?category=${encodeURIComponent(selCat)}` : ""}`);
     const m = await res.json();
@@ -163,7 +165,7 @@ export default function App() {
     qs.set("country", country);
     if (category !== "all") qs.set("category", category);
     if (subcategory !== "all") qs.set("subcategory", subcategory);
-    if (weeklyStatus) qs.set("status", weeklyStatus);
+    if (weeklyStatus) qs.set("status", weeklyStatus); // използва се само в Weekly
     const r = await fetch(`${API}/weekly/insights?${qs.toString()}`);
     const j = (await r.json()) as WeeklyPayload;
     setWeekly(j);
@@ -175,7 +177,7 @@ export default function App() {
     else loadWeekly();
   }, [tab, country, category, subcategory, weeklyStatus]);
 
-  /* ------------------------------ Actions ------------------------------ */
+  /* ----------------------------- Actions ----------------------------- */
   function exportCompareCSV() {
     const qs = new URLSearchParams();
     qs.set("limit", "500");
@@ -194,7 +196,6 @@ export default function App() {
     qs.set("format", "csv");
     window.open(`${API}/weekly/insights?${qs.toString()}`, "_blank");
   }
-
   async function refreshDB() {
     try {
       const r = await fetch(`${API}/admin/refresh`);
@@ -204,7 +205,6 @@ export default function App() {
       else loadWeekly();
     } catch {}
   }
-
   function resetFilters() {
     setCountry(countries[0] || "US");
     setCategory("all");
@@ -212,12 +212,9 @@ export default function App() {
     setWeeklyStatus("");
   }
 
-  /* ------------------------------ Sorting ------------------------------ */
+  /* ----------------------------- Sorting ----------------------------- */
   function sortCompareBy(key: keyof CompareRow) {
-    setCompareSort((prev) => {
-      const dir = prev?.key === key && prev.dir === "asc" ? "desc" : "asc";
-      return { key, dir };
-    });
+    setCompareSort((prev) => ({ key, dir: prev?.key === key && prev.dir === "asc" ? "desc" : "asc" }));
   }
   const compareSorted = useMemo(() => {
     const arr = [...compareRows];
@@ -234,10 +231,7 @@ export default function App() {
   }, [compareRows, compareSort]);
 
   function sortWeeklyBy(key: keyof WeeklyRow) {
-    setWeeklySort((prev) => {
-      const dir = prev?.key === key && prev.dir === "asc" ? "desc" : "asc";
-      return { key, dir };
-    });
+    setWeeklySort((prev) => ({ key, dir: prev?.key === key && prev.dir === "asc" ? "desc" : "asc" }));
   }
   const weeklySorted = useMemo(() => {
     const arr = [...(weekly.rows || [])];
@@ -253,66 +247,41 @@ export default function App() {
     return arr;
   }, [weekly.rows, weeklySort]);
 
-  /* ------------------------------ Pagination ------------------------------ */
+  /* ----------------------------- Pagination ----------------------------- */
+  const PER = 50;
   const comparePaged = useMemo(() => {
-    const start = (pageCompare - 1) * PER_PAGE;
-    return compareSorted.slice(start, start + PER_PAGE);
+    const start = (pageCompare - 1) * PER;
+    return compareSorted.slice(start, start + PER);
   }, [compareSorted, pageCompare]);
-
   const weeklyPaged = useMemo(() => {
-    const start = (pageWeekly - 1) * PER_PAGE;
-    return weeklySorted.slice(start, start + PER_PAGE);
+    const start = (pageWeekly - 1) * PER;
+    return weeklySorted.slice(start, start + PER);
   }, [weeklySorted, pageWeekly]);
 
-  /* ------------------------------ Render helpers ------------------------------ */
-  function StatusIcon(r: CompareRow) {
+  /* ----------------------------- Render helpers ----------------------------- */
+  function StatusEmoji(r: CompareRow) {
     const s = (r.status || "").toUpperCase();
-    const size = 16;
-    if (s.includes("MOVER UP"))
-      return (
-        <span style={{ color: "#16a34a", display: "inline-flex", alignItems: "center", gap: 6 }}>
-          <ArrowUp size={size} /> {r.delta ?? ""}
-        </span>
-      );
-    if (s.includes("MOVER DOWN"))
-      return (
-        <span style={{ color: "#dc2626", display: "inline-flex", alignItems: "center", gap: 6 }}>
-          <ArrowDown size={size} /> {Math.abs(r.delta ?? 0)}
-        </span>
-      );
-    if (s.includes("NEW"))
-      return (
-        <span style={{ color: "#007AFF", display: "inline-flex", alignItems: "center", gap: 6 }}>
-          <PlusCircle size={size} /> NEW
-        </span>
-      );
-    if (s.includes("DROPPED"))
-      return (
-        <span style={{ color: "#6b7280", display: "inline-flex", alignItems: "center", gap: 6 }}>
-          <AlertCircle size={size} /> DROPPED
-        </span>
-      );
-    return (
-      <span style={{ color: "#6b7280", display: "inline-flex", alignItems: "center", gap: 6 }}>
-        <MinusCircle size={size} /> IN TOP
-      </span>
-    );
+    const style: React.CSSProperties = { fontSize: "1.4em", lineHeight: 1 };
+    if (s.includes("MOVER UP")) return <span style={{ ...style, color: "#16a34a" }}>▲</span>;
+    if (s.includes("MOVER DOWN")) return <span style={{ ...style, color: "#dc2626" }}>▼</span>;
+    if (s.includes("NEW")) return <span style={{ ...style, color: "#007AFF" }}>🆕</span>;
+    if (s.includes("DROPPED")) return <span style={{ ...style, color: "#6b7280" }}>❌</span>;
+    return <span style={{ ...style, color: "#666" }}>⚫</span>; // IN TOP
   }
 
-  /* ------------------------------ UI ------------------------------ */
+  /* ============================== UI ============================== */
   return (
     <div
       style={{
-        fontFamily:
-          'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif',
-        background: pageBg,
+        fontFamily: 'system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif',
+        background: PAGE_BG,
         minHeight: "100vh",
       }}
     >
       <div style={{ maxWidth: 1280, margin: "0 auto", padding: 16 }}>
         {/* Header */}
         <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
-          <img src="/logo.svg" width={28} height={28} alt="Logo" />
+          <span style={{ fontSize: 28 }}>📱</span>
           <h1 style={{ margin: 0 }}>App Store Dashboard</h1>
         </div>
 
@@ -352,12 +321,12 @@ export default function App() {
               ))}
             </select>
 
-            {/* Weekly status filter (works only in Weekly tab) */}
+            {/* Weekly status filter (applies only to Weekly tab) */}
             <select
               value={weeklyStatus}
               onChange={(e) => setWeeklyStatus(e.target.value as any)}
-              title="Weekly status filter"
               style={{ padding: 6, borderRadius: 8 }}
+              title="Weekly status filter"
             >
               <option value="">All statuses</option>
               <option value="NEW">NEW</option>
@@ -365,6 +334,7 @@ export default function App() {
               <option value="DROPPED">DROPPED</option>
             </select>
 
+            {/* Actions */}
             <button style={btnLite} onClick={resetFilters}>
               Reset
             </button>
@@ -374,7 +344,6 @@ export default function App() {
             <button style={{ ...btnLite, display: "inline-flex", alignItems: "center", gap: 6 }} onClick={refreshDB}>
               🔄 Refresh DB
             </button>
-
             {tab === "compare" ? (
               <button style={btnGreen} onClick={exportCompareCSV}>
                 Export CSV
@@ -392,7 +361,7 @@ export default function App() {
           Data last updated: <b>{latestSnapshot ?? "N/A"}</b>
         </div>
 
-        {/* ============================ COMPARE VIEW ============================ */}
+        {/* ====================== COMPARE VIEW ====================== */}
         {tab === "compare" && (
           <div style={{ ...card }}>
             <div style={{ overflowX: "auto" }}>
@@ -428,7 +397,7 @@ export default function App() {
                 <tbody>
                   {comparePaged.length === 0 && (
                     <tr>
-                      <td colSpan={9} style={{ textAlign: "center", padding: 12, color: "#667085" }}>
+                      <td colSpan={9} style={{ padding: 12, textAlign: "center", color: "#667085" }}>
                         No data.
                       </td>
                     </tr>
@@ -439,9 +408,9 @@ export default function App() {
                       style={{
                         borderTop: "1px solid #eef2f7",
                         background: i % 2 === 0 ? "#fff" : "#fafbff",
-                        transition: "background .15s",
+                        transition: "background 0.25s ease",
                       }}
-                      onMouseEnter={(e) => (e.currentTarget.style.background = "#eef5ff")}
+                      onMouseEnter={(e) => (e.currentTarget.style.background = HOVER_BG)}
                       onMouseLeave={(e) => (e.currentTarget.style.background = i % 2 === 0 ? "#fff" : "#fafbff")}
                     >
                       <td style={{ padding: 10 }}>{r.app_name}</td>
@@ -451,17 +420,9 @@ export default function App() {
                       <td style={{ padding: 10 }}>{r.subcategory ?? "—"}</td>
                       <td style={{ padding: 10, textAlign: "right" }}>{r.current_rank ?? "—"}</td>
                       <td style={{ padding: 10, textAlign: "right" }}>{r.previous_rank ?? "—"}</td>
-                      <td
-                        style={{
-                          padding: 10,
-                          textAlign: "right",
-                          color: (r.delta ?? 0) > 0 ? "#16a34a" : (r.delta ?? 0) < 0 ? "#dc2626" : "#111",
-                        }}
-                      >
-                        {r.delta ?? "—"}
-                      </td>
-                      <td style={{ padding: 10, textAlign: "left" }}>
-                        <StatusIcon {...r} />
+                      <td style={{ padding: 10, textAlign: "right" }}>{r.delta ?? "—"}</td>
+                      <td style={{ padding: 10, textAlign: "center" }}>
+                        <StatusEmoji {...r} />
                       </td>
                     </tr>
                   ))}
@@ -477,8 +438,8 @@ export default function App() {
               <span>Page {pageCompare}</span>
               <button
                 style={btnLite}
-                onClick={() => setPageCompare((p) => Math.min(Math.ceil(compareSorted.length / PER_PAGE) || 1, p + 1))}
-                disabled={pageCompare * PER_PAGE >= compareSorted.length}
+                onClick={() => setPageCompare((p) => Math.min(Math.ceil(compareSorted.length / PER) || 1, p + 1))}
+                disabled={pageCompare * PER >= compareSorted.length}
               >
                 Next
               </button>
@@ -486,13 +447,13 @@ export default function App() {
           </div>
         )}
 
-        {/* ============================ WEEKLY VIEW ============================ */}
+        {/* ====================== WEEKLY VIEW ====================== */}
         {tab === "weekly" && (
           <div style={{ ...card }}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
               <h2 style={{ margin: 0 }}>{formatWeekLabel(weekly.week_start, weekly.week_end)}</h2>
               <div style={{ display: "flex", gap: 10 }}>
-                <span style={pill("#EEF2FF", "#1f2937")}>ALL: {weekly.counts?.ALL ?? weekly.rows.length}</span>
+                <span style={pill("#E5E7EB", "#111")}>ALL: {weekly.counts?.ALL ?? weekly.rows.length}</span>
                 <span style={pill("#007AFF")}>NEW: {weekly.counts?.NEW ?? 0}</span>
                 <span style={pill("#16a34a")}>RE-ENTRY: {weekly.counts?.["RE-ENTRY"] ?? 0}</span>
                 <span style={pill("#dc2626")}>DROPPED: {weekly.counts?.DROPPED ?? 0}</span>
@@ -532,7 +493,7 @@ export default function App() {
                 <tbody>
                   {weeklyPaged.length === 0 && (
                     <tr>
-                      <td colSpan={9} style={{ textAlign: "center", padding: 12, color: "#667085" }}>
+                      <td colSpan={9} style={{ padding: 12, textAlign: "center", color: "#667085" }}>
                         No data.
                       </td>
                     </tr>
@@ -543,34 +504,21 @@ export default function App() {
                       style={{
                         borderTop: "1px solid #eef2f7",
                         background: i % 2 === 0 ? "#fff" : "#fafbff",
-                        transition: "background .15s",
+                        transition: "background 0.25s ease",
                       }}
-                      onMouseEnter={(e) => (e.currentTarget.style.background = "#eef5ff")}
+                      onMouseEnter={(e) => (e.currentTarget.style.background = HOVER_BG)}
                       onMouseLeave={(e) => (e.currentTarget.style.background = i % 2 === 0 ? "#fff" : "#fafbff")}
                     >
                       <td style={{ padding: 10 }}>
-                        {r.status === "NEW" && (
-                          <span style={{ color: "#007AFF", display: "inline-flex", alignItems: "center", gap: 6 }}>
-                            <PlusCircle size={16} /> NEW
-                          </span>
-                        )}
-                        {r.status === "RE-ENTRY" && (
-                          <span style={{ color: "#16a34a", display: "inline-flex", alignItems: "center", gap: 6 }}>
-                            <MinusCircle size={16} /> RE-ENTRY
-                          </span>
-                        )}
-                        {r.status === "DROPPED" && (
-                          <span style={{ color: "#6b7280", display: "inline-flex", alignItems: "center", gap: 6 }}>
-                            <AlertCircle size={16} /> DROPPED
-                          </span>
-                        )}
+                        {/* показваме текстовия статус (без емоджи), както се разбрахме — Compare има само емоджи */}
+                        {r.status}
                       </td>
                       <td style={{ padding: 10, textAlign: "right" }}>{r.rank ?? "—"}</td>
                       <td style={{ padding: 10 }}>{r.app_name}</td>
                       <td style={{ padding: 10, whiteSpace: "nowrap" }}>{r.app_id}</td>
                       <td style={{ padding: 10 }}>{r.developer_name || "—"}</td>
                       <td style={{ padding: 10, whiteSpace: "nowrap" }}>{r.bundle_id || "—"}</td>
-                      <td style={{ padding: 10 }}>{r.country || "—"}</td>
+                      <td style={{ padding: 10 }}>{r.country || country}</td>
                       <td style={{ padding: 10 }}>{r.category || "—"}</td>
                       <td style={{ padding: 10 }}>{r.subcategory || "—"}</td>
                     </tr>
@@ -588,9 +536,9 @@ export default function App() {
               <button
                 style={btnLite}
                 onClick={() =>
-                  setPageWeekly((p) => Math.min(Math.ceil((weeklySorted.length || 0) / PER_PAGE) || 1, p + 1))
+                  setPageWeekly((p) => Math.min(Math.ceil((weeklySorted.length || 0) / PER) || 1, p + 1))
                 }
-                disabled={pageWeekly * PER_PAGE >= (weeklySorted.length || 0)}
+                disabled={pageWeekly * PER >= (weeklySorted.length || 0)}
               >
                 Next
               </button>
