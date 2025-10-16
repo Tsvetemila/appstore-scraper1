@@ -788,3 +788,12 @@ def weekly_insights(
         "counts": counts,
         "rows": sorted(rows, key=lambda x: (x["rank"] is None, x["rank"] or 999)),
     }
+
+
+@app.middleware("http")
+async def add_cors_headers(request, call_next):
+    response = await call_next(request)
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
+    response.headers["Access-Control-Allow-Headers"] = "*"
+    return response
