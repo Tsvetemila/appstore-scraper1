@@ -697,7 +697,7 @@ def weekly_insights(
     # Данни за текущата седмица
     placeholders_week = ",".join(["?"] * len(week_dates))
     cur.execute(f"""
-        SELECT app_id, app_name, developer, bundle_id, category, subcategory, rank
+        SELECT app_id, app_name, developer_name, bundle_id, category, subcategory, rank
         FROM charts
         WHERE {where_base} AND snapshot_date IN ({placeholders_week})
     """, (*params_base, *week_dates))
@@ -752,7 +752,7 @@ def weekly_insights(
     if dropped_ids:
         placeholders_drop = ",".join(["?"] * len(dropped_ids))
         cur.execute(f"""
-            SELECT app_id, app_name, developer, bundle_id, category, subcategory
+            SELECT app_id, app_name, developer_name, bundle_id, category, subcategory
             FROM charts WHERE app_id IN ({placeholders_drop})
             GROUP BY app_id
         """, (*dropped_ids,))
