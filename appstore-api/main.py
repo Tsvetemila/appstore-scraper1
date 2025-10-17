@@ -329,6 +329,14 @@ def compare_weekly_full(
         con.close()
         return {"message": "Not enough previous snapshots", "results": [], "latest_snapshot": latest}
 
+    # all apps that have ever appeared before the latest snapshot
+    cur.execute("""
+        SELECT DISTINCT app_id FROM charts
+        WHERE country=? AND chart_type='top_free' AND snapshot_date < ?
+    """, (country, latest))
+    all_before_ids = {r[0] for r in cur.fetchall() if r[0]}
+
+
     # WHERE for optional filters
     where_base, params_base = _where({"country": country, "category": category, "subcategory": subcategory})
 
@@ -372,7 +380,13 @@ def compare_weekly_full(
         subcat = row["subcategory"]
 
         if app_id not in prev_data:
-            status, rank_prev, rank_change = "NEW", None, None
+            # unified logic with Weekly View
+            if app_id not in all_before_ids:
+                status = "NEW"          # 🆕 never appeared before
+            else:
+                status = "RE-ENTRY"     # 🔁 appeared before but not in last 7 snapshots
+            rank_prev, rank_change = None, None
+
         else:
             ranks = prev_data[app_id]["ranks"]
             rank_prev = int(sum(ranks) / len(ranks))
