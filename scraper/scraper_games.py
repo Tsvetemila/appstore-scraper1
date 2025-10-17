@@ -44,16 +44,23 @@ def ensure_schema(conn):
     cur.execute("PRAGMA table_info(charts)")
     cols=[r[1] for r in cur.fetchall()]
     if "genre_id" not in cols: cur.execute("ALTER TABLE charts ADD COLUMN genre_id TEXT;")
+    cur.execute("PRAGMA table_info(charts)")
+    cols = [r[1] for r in cur.fetchall()]
+    for col in ["app_store_url", "app_url", "icon_url", "developer_linkedin_url"]:
+        if col not in cols:
+            print(f"[DB] Adding missing column: {col}")
+            cur.execute(f"ALTER TABLE charts ADD COLUMN {col} TEXT;")
     conn.commit()
 
 def insert_rows(conn,rows):
     conn.executemany("""
      INSERT OR REPLACE INTO charts (
-      snapshot_date,country,category,subcategory,chart_type,rank,
-      app_id,bundle_id,app_name,developer_name,price,currency,
-      rating,ratings_count,genre_id,raw)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-    """,rows)
+         snapshot_date,country,category,subcategory,chart_type,rank,
+         app_id,bundle_id,app_name,developer_name,price,currency,
+         rating,ratings_count,genre_id,
+         app_store_url,app_url,icon_url,developer_linkedin_url,raw
+     ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+     """,rows)
     conn.commit()
 
 def parse_itunes(data):
@@ -88,6 +95,28 @@ def fetch_genre_top50(country,genre_id,slug):
     if items:return items,"itunes"
     return parse_html_games(country,genre_id,slug),"html"
 
+def find_linkedin_profile(developer_name: str) -> str:
+    """
+    Try to find the developer's LinkedIn company or profile page via Bing search API.
+    Returns the first LinkedIn URL found, or empty string if none.
+    """
+    try:
+        BING_KEY = os.getenv("BING_API_KEY")
+        if not BING_KEY or not developer_name:
+            return ""
+        query = f'"{developer_name}" site:linkedin.com/company OR site:linkedin.com/in'
+        headers = {"Ocp-Apim-Subscription-Key": BING_KEY}
+        url = f"https://api.bing.microsoft.com/v7.0/search?q={requests.utils.quote(query)}"
+        r = requests.get(url, headers=headers, timeout=10)
+        if r.status_code == 200:
+            data = r.json()
+            webPages = data.get("webPages", {}).get("value", [])
+            if webPages:
+                return webPages[0].get("url", "")
+    except Exception as e:
+        print(f"[WARN] LinkedIn lookup failed for {developer_name}: {e}")
+    return ""
+
 def enrich_with_lookup(country,ids):
     out={}
     for i in range(0,len(ids),50):
@@ -100,10 +129,16 @@ def enrich_with_lookup(country,ids):
             genres=r.get("genres") or []
             subcat=genres[0] if genres else None
             out[tid]={
-             "bundle_id":r.get("bundleId"),"price":r.get("price"),
-             "currency":r.get("currency"),"rating":r.get("averageUserRating"),
-             "ratings_count":r.get("userRatingCount"),"genre_id":str(r.get("primaryGenreId")),
-             "subcategory":subcat,"raw":json.dumps(r,ensure_ascii=False)}
+             "bundle_id": r.get("bundleId"),
+             "price": r.get("price"),
+             "currency": r.get("currency"),
+             "rating": r.get("averageUserRating"),
+             "ratings_count": r.get("userRatingCount"),
+             "app_store_url": r.get("trackViewUrl"),
+             "app_url": r.get("sellerUrl"),
+             "icon_url": r.get("artworkUrl100"),
+             "developer_linkedin_url": find_linkedin_profile(r.get("artistName", "")),
+             "raw": json.dumps(r, ensure_ascii=False)}
     return out
 
 def scrape_games():
@@ -119,9 +154,16 @@ def scrape_games():
             rows=[(snap,country,"Games",slug.replace("-"," ").title(),"top_free",
                     it["rank"],it["id"],lookup.get(it["id"],{}).get("bundle_id"),
                     it["name"],it["artistName"],
-                    lookup.get(it["id"],{}).get("price"),lookup.get(it["id"],{}).get("currency"),
-                    lookup.get(it["id"],{}).get("rating"),lookup.get(it["id"],{}).get("ratings_count"),
-                    lookup.get(it["id"],{}).get("genre_id"),lookup.get(it["id"],{}).get("raw"))
+                    lookup.get(it["id"], {}).get("price"),
+                    lookup.get(it["id"], {}).get("currency"),
+                    lookup.get(it["id"], {}).get("rating"),
+                    lookup.get(it["id"], {}).get("ratings_count"),
+                    lookup.get(it["id"], {}).get("genre_id"),
+                    lookup.get(it["id"], {}).get("app_store_url"),
+                    lookup.get(it["id"], {}).get("app_url"),
+                    lookup.get(it["id"], {}).get("icon_url"),
+                    lookup.get(it["id"], {}).get("developer_linkedin_url"),
+                    lookup.get(it["id"], {}).get("raw"))
                    for it in items]
             insert_rows(conn,rows);total+=len(rows)
             print(f"[INFO] {country} {slug} ({src}): {len(rows)}")

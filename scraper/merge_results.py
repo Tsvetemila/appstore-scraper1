@@ -15,10 +15,12 @@ def export_latest_csv(db_path: str, out_dir: str | Path | None = None) -> Path:
         if not snap:
             raise RuntimeError("No snapshots in DB; nothing to export.")
 
+        # взимаме всички колони, включително новите
         cur.execute("""
             SELECT snapshot_date, country, category, subcategory, chart_type,
                    rank, app_id, bundle_id, app_name, developer_name,
-                   price, currency, rating, ratings_count, genre_id
+                   price, currency, rating, ratings_count, genre_id,
+                   app_store_url, app_url, icon_url, developer_linkedin_url
             FROM charts
             WHERE snapshot_date = ?
             ORDER BY country, category, COALESCE(subcategory,''), rank
@@ -30,10 +32,14 @@ def export_latest_csv(db_path: str, out_dir: str | Path | None = None) -> Path:
         "snapshot_date","country","category","subcategory","chart_type",
         "rank","app_id","bundle_id","app_name","developer_name",
         "price","currency","rating","ratings_count","genre_id",
+        "app_store_url","app_url","icon_url","developer_linkedin_url"
     ]
     with out_path.open("w", encoding="utf-8", newline="") as f:
-        w = csv.writer(f); w.writerow(header); w.writerows(rows)
-    print(f"[OK] exported combined CSV -> {out_path}")
+        w = csv.writer(f)
+        w.writerow(header)
+        w.writerows(rows)
+
+    print(f"[OK] exported extended CSV -> {out_path}")
     return out_path
 
 if __name__ == "__main__":
