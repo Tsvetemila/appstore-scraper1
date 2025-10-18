@@ -711,9 +711,19 @@ def weekly_insights(
     # текущи приложения
     placeholders_week = ",".join(["?"] * len(week_dates))
     cur.execute(f"""
-        SELECT app_id, app_name, developer_name, category, subcategory, rank
-        FROM charts
-        WHERE {where_base} AND snapshot_date IN ({placeholders_week})
+        SELECT 
+        app_id,
+        app_name,
+        developer_name,
+        category,
+        subcategory,
+        rank,
+        app_store_url,
+        app_url,
+        icon_url,
+        developer_linkedin_url
+    FROM charts
+    WHERE {where_base} AND snapshot_date IN ({placeholders_week})
     """, (*params_base, *week_dates))
     week_apps = {r["app_id"]: dict(r) for r in cur.fetchall()}
     week_ids = set(week_apps.keys())
@@ -756,6 +766,10 @@ def weekly_insights(
             "bundle_id": "",
             "category": info["category"],
             "subcategory": info["subcategory"],
+            "app_store_url": info.get("app_store_url") or "",
+            "app_url": info.get("app_url") or "",
+            "icon_url": info.get("icon_url") or "",
+            "developer_linkedin_url": info.get("developer_linkedin_url") or "",
         })
 
     # DROPPED
@@ -777,6 +791,10 @@ def weekly_insights(
                 "bundle_id": "",
                 "category": r["category"],
                 "subcategory": r["subcategory"],
+                "app_store_url": r.get("app_store_url") or "",
+                "app_url": r.get("app_url") or "",
+                "icon_url": r.get("icon_url") or "",
+                "developer_linkedin_url": r.get("developer_linkedin_url") or "",
             })
         counts["DROPPED"] = len(dropped_ids)
 
