@@ -89,6 +89,10 @@ type WeeklyRow = {
   country?: string;
   category: string;
   subcategory: string;
+  app_store_url?: string;
+  app_url?: string;
+  icon_url?: string;
+  developer_linkedin_url?: string;
 };
 
 type WeeklyPayload = {
@@ -470,6 +474,10 @@ export default function App() {
                       ["app_name", "App"],
                       ["app_id", "App ID"],
                       ["developer_name", "Developer"],
+                      ["app_store_url", "App Store"],
+                      ["app_url", "Website"],
+                      ["developer_linkedin_url", "LinkedIn"],
+                      ["icon_url", "Icon"],
                       ["bundle_id", "Bundle ID"],
                       ["country", "Country"],
                       ["category", "Category"],
@@ -517,6 +525,49 @@ export default function App() {
                       <td style={{ padding: 10 }}>{r.app_name}</td>
                       <td style={{ padding: 10, whiteSpace: "nowrap" }}>{r.app_id}</td>
                       <td style={{ padding: 10 }}>{r.developer_name || "—"}</td>
+                      <td style={{ padding: 10 }}>
+  {r.app_store_url ? (
+    <a href={r.app_store_url} target="_blank" rel="noopener noreferrer">
+      Store
+    </a>
+  ) : (
+    "—"
+  )}
+</td>
+<td style={{ padding: 10 }}>
+  {r.app_url ? (
+    <a href={r.app_url} target="_blank" rel="noopener noreferrer">
+      Website
+    </a>
+  ) : (
+    "—"
+  )}
+</td>
+<td style={{ padding: 10 }}>
+  {r.developer_linkedin_url ? (
+    <a href={r.developer_linkedin_url} target="_blank" rel="noopener noreferrer">
+      LinkedIn
+    </a>
+  ) : (
+    "—"
+  )}
+</td>
+<td style={{ padding: 10 }}>
+  {r.icon_url ? (
+    <img
+      src={r.icon_url}
+      alt="App Icon"
+      style={{
+        width: 32,
+        height: 32,
+        borderRadius: 6,
+        objectFit: "cover",
+      }}
+    />
+  ) : (
+    "—"
+  )}
+</td>
                       <td style={{ padding: 10, whiteSpace: "nowrap" }}>{r.bundle_id || "—"}</td>
                       <td style={{ padding: 10 }}>{r.country || country}</td>
                       <td style={{ padding: 10 }}>{r.category || "—"}</td>
