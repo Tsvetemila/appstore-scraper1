@@ -823,8 +823,12 @@ def weekly_insights(
 
 @app.middleware("http")
 async def add_cors_headers(request, call_next):
-    response = await call_next(request)
+    try:
+        response = await call_next(request)
+    except Exception as e:
+        response = Response(content=str(e), status_code=500)
     response.headers["Access-Control-Allow-Origin"] = "*"
     response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
     response.headers["Access-Control-Allow-Headers"] = "*"
     return response
+
