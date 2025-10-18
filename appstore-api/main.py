@@ -762,14 +762,14 @@ def weekly_insights(
             "rank": info["rank"],
             "app_id": app_id,
             "app_name": info["app_name"],
-            "developer_name": info.get("developer_name") or "",
+            "developer_name": info["developer_name"] or "",
             "bundle_id": "",
             "category": info["category"],
             "subcategory": info["subcategory"],
-            "app_store_url": info.get("app_store_url") or "",
-            "app_url": info.get("app_url") or "",
-            "icon_url": info.get("icon_url") or "",
-            "developer_linkedin_url": info.get("developer_linkedin_url") or "",
+            "app_store_url": info["app_store_url"] or "",
+            "app_url": info["app_url"] or "",
+            "icon_url": info["icon_url"] or "",
+            "developer_linkedin_url": info["developer_linkedin_url"] or "",
         })
 
     # DROPPED
@@ -777,7 +777,8 @@ def weekly_insights(
     if dropped_ids:
         placeholders_drop = ",".join(["?"] * len(dropped_ids))
         cur.execute(f"""
-            SELECT app_id, app_name, developer_name, category, subcategory
+            SELECT app_id, app_name, developer_name, category, subcategory,
+                   app_store_url, app_url, icon_url, developer_linkedin_url
             FROM charts WHERE app_id IN ({placeholders_drop})
             GROUP BY app_id
         """, (*dropped_ids,))
@@ -791,10 +792,10 @@ def weekly_insights(
                 "bundle_id": "",
                 "category": r["category"],
                 "subcategory": r["subcategory"],
-                "app_store_url": r.get("app_store_url") or "",
-                "app_url": r.get("app_url") or "",
-                "icon_url": r.get("icon_url") or "",
-                "developer_linkedin_url": r.get("developer_linkedin_url") or "",
+                "app_store_url": r["app_store_url"] or "",
+                "app_url": r["app_url"] or "",
+                "icon_url": r["icon_url"] or "",
+                "developer_linkedin_url": r["developer_linkedin_url"] or "",
             })
         counts["DROPPED"] = len(dropped_ids)
 
