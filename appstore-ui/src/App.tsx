@@ -568,9 +568,55 @@ export default function App() {
                       onMouseEnter={(e) => (e.currentTarget.style.background = HOVER_BG)}
                       onMouseLeave={(e) => (e.currentTarget.style.background = i % 2 === 0 ? "#fff" : "#fafbff")}
                     >
+                      
                       <td style={{ padding: 10 }}>
-                        {/* показваме текстовия статус (без емоджи), както се разбрахме — Compare има само емоджи */}
-                        {r.status}
+                        {r.status === "NEW" && (
+                          <span
+                            style={{
+                              background: "#007AFF",
+                              color: "#fff",
+                              padding: "4px 8px",
+                              borderRadius: "999px",
+                              fontSize: 12,
+                              fontWeight: 700,
+                              display: "inline-block",
+                          }}
+                        >
+                          NEW
+                        </span>
+                      )}
+                      {r.status === "RE-ENTRY" && (
+                        <span
+                          style={{
+                            background: "#16a34a",
+                            color: "#fff",
+                            padding: "4px 8px",
+                            borderRadius: "999px",
+                            fontSize: 12,
+                            fontWeight: 700,
+                            display: "inline-block",
+                          }}
+                        >
+                          RE-ENTRY
+                        </span>
+                      )}
+                      {r.status === "DROPPED" && (
+                        <span
+                          style={{
+                            background: "#dc2626",
+                            color: "#fff",
+                            padding: "4px 8px",
+                            borderRadius: "999px",
+                            fontSize: 12,
+                            fontWeight: 700,
+                            display: "inline-block",
+                      }}
+                    >
+                      DROPPED
+                    </span>
+                  )}
+                  {!["NEW", "RE-ENTRY", "DROPPED"].includes(r.status) && (r.status || "—")}
+                </td>
                       </td>
                       <td style={{ padding: 10, textAlign: "right" }}>{r.rank ?? "—"}</td>
                       <td style={{ padding: 10 }}>{r.app_name}</td>

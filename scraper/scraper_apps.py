@@ -151,6 +151,10 @@ def find_linkedin_profile(developer_name: str) -> str:
                 _LINKEDIN_CACHE[developer_name] = link
                 time.sleep(0.5)
                 return link
+
+            # 🕒 Минимална пауза между заявките (предпазва безплатния Bing tier)
+            time.sleep(1)
+
     except Exception as e:
         print(f"[WARN] Bing lookup failed for {developer_name}: {e}")
 
@@ -220,10 +224,16 @@ def scrape_apps():
             insert_rows(conn,rows)
             total+=len(rows)
             print(f"[INFO] {country} {slug} ({src}): {len(rows)}")
-    conn.close()
+    
     print(f"[OK] APPS inserted {total} rows {snap}")
 
-save_linkedin_cache()
+    # ✅ Запазваме кеша веднага след успешен скрейп
+    save_linkedin_cache()
+
+    # ✅ Затваряме базата безопасно
+    if conn:
+        conn.close()
+
 
 if __name__=="__main__":
     scrape_apps()
