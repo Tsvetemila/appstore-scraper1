@@ -617,7 +617,6 @@ export default function App() {
                   )}
                   {!["NEW", "RE-ENTRY", "DROPPED"].includes(r.status) && (r.status || "—")}
                 </td>
-                      </td>
                       <td style={{ padding: 10, textAlign: "right" }}>{r.rank ?? "—"}</td>
                       <td style={{ padding: 10 }}>{r.app_name}</td>
                       <td style={{ padding: 10, whiteSpace: "nowrap" }}>{r.app_id}</td>
