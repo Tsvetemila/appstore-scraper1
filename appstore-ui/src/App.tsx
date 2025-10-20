@@ -191,15 +191,66 @@ export default function App() {
     qs.set("format", "csv");
     window.open(`${API}/compare?${qs.toString()}`, "_blank");
   }
+
   function exportWeeklyCSV() {
-    const qs = new URLSearchParams();
-    qs.set("country", country);
-    if (category !== "all") qs.set("category", category);
-    if (subcategory !== "all") qs.set("subcategory", subcategory);
-    if (weeklyStatus) qs.set("status", weeklyStatus);
-    qs.set("format", "csv");
-    window.open(`${API}/weekly/insights?${qs.toString()}`, "_blank");
+  if (!weekly.rows || weekly.rows.length === 0) {
+    alert("No data available to export.");
+    return;
   }
+
+  // Заглавия на колоните
+  const headers = [
+    "status",
+    "rank",
+    "app_id",
+    "app_name",
+    "developer_name",
+    "bundle_id",
+    "category",
+    "subcategory",
+    "app_store_url",
+    "app_url",
+    "developer_linkedin_url",
+    "icon_url",
+    "country",
+  ];
+
+  // Преобразуваме редовете в CSV формат
+  const csvRows = weekly.rows.map((r) =>
+    [
+      r.status || "",
+      r.rank || "",
+      r.app_id || "",
+      (r.app_name || "").replace(/"/g, '""'),
+      (r.developer_name || "").replace(/"/g, '""'),
+      r.bundle_id || "",
+      r.category || "",
+      r.subcategory || "",
+      r.app_store_url || "",
+      r.app_url || "",
+      r.developer_linkedin_url || "",
+      r.icon_url || "",
+      r.country || country,
+    ]
+      .map((val) => `"${val}"`)
+      .join(",")
+  );
+
+  const csvContent = [headers.join(","), ...csvRows].join("\n");
+
+  // Създаваме и сваляме CSV файл
+  const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+  const link = document.createElement("a");
+  const url = URL.createObjectURL(blob);
+  const dateLabel = new Date().toISOString().split("T")[0];
+  link.setAttribute("href", url);
+  link.setAttribute("download", `weekly_insights_${country}_${dateLabel}.csv`);
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+
+  }
+
   async function refreshDB() {
     try {
       const r = await fetch(`${API}/admin/refresh`);
