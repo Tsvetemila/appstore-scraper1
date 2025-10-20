@@ -100,28 +100,71 @@ def fetch_genre_top50(country, genre_id, slug):
     # fallback HTML
     return parse_html_apps(country, genre_id, slug),"html"
 
+_LINKEDIN_CACHE_PATH = os.path.join(os.path.dirname(__file__), "..", "appstore-api", "data", "linkedin_cache.json")
+try:
+    if os.path.exists(_LINKEDIN_CACHE_PATH):
+        with open(_LINKEDIN_CACHE_PATH, "r", encoding="utf-8") as f:
+            _LINKEDIN_CACHE = json.load(f)
+    else:
+        _LINKEDIN_CACHE = {}
+except Exception:
+    _LINKEDIN_CACHE = {}
+
 def find_linkedin_profile(developer_name: str) -> str:
     """
-    Try to find the developer's LinkedIn company or profile page via Bing search API.
-    Returns the first LinkedIn URL found, or empty string if none.
+    Smart LinkedIn lookup: 
+    1. Check JSON cache 
+    2. Check DB if available 
+    3. Use Bing API only if needed
     """
+    if not developer_name:
+        return ""
+    if developer_name in _LINKEDIN_CACHE and _LINKEDIN_CACHE[developer_name]:
+        return _LINKEDIN_CACHE[developer_name]
+
     try:
-        import requests, os
-        BING_KEY = os.getenv("BING_API_KEY")  # твоя Bing ключ от Azure Portal
-        if not BING_KEY or not developer_name:
-            return ""
+        con = sqlite3.connect(DB_PATH)
+        cur = con.cursor()
+        cur.execute("SELECT developer_linkedin_url FROM charts WHERE developer_name=? AND developer_linkedin_url != '' LIMIT 1", (developer_name,))
+        row = cur.fetchone()
+        con.close()
+        if row and row[0]:
+            _LINKEDIN_CACHE[developer_name] = row[0]
+            return row[0]
+    except Exception:
+        pass
+
+    BING_KEY = os.getenv("BING_API_KEY")
+    if not BING_KEY:
+        return ""
+
+    try:
         query = f'"{developer_name}" site:linkedin.com/company OR site:linkedin.com/in'
         headers = {"Ocp-Apim-Subscription-Key": BING_KEY}
         url = f"https://api.bing.microsoft.com/v7.0/search?q={requests.utils.quote(query)}"
         r = requests.get(url, headers=headers, timeout=10)
         if r.status_code == 200:
             data = r.json()
-            webPages = data.get("webPages", {}).get("value", [])
-            if webPages:
-                return webPages[0].get("url", "")
+            value = data.get("webPages", {}).get("value", [])
+            if value:
+                link = value[0].get("url", "")
+                _LINKEDIN_CACHE[developer_name] = link
+                time.sleep(0.5)
+                return link
     except Exception as e:
-        print(f"[WARN] LinkedIn lookup failed for {developer_name}: {e}")
+        print(f"[WARN] Bing lookup failed for {developer_name}: {e}")
+
+    _LINKEDIN_CACHE[developer_name] = ""
     return ""
+
+def save_linkedin_cache():
+    try:
+        with open(_LINKEDIN_CACHE_PATH, "w", encoding="utf-8") as f:
+            json.dump(_LINKEDIN_CACHE, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        print(f"[WARN] Could not save LinkedIn cache: {e}")
+
+
 
 
 def enrich_with_lookup(country, ids):
@@ -179,6 +222,8 @@ def scrape_apps():
             print(f"[INFO] {country} {slug} ({src}): {len(rows)}")
     conn.close()
     print(f"[OK] APPS inserted {total} rows {snap}")
+
+save_linkedin_cache()
 
 if __name__=="__main__":
     scrape_apps()

@@ -152,6 +152,15 @@ def ensure_tables_exist(db_path: str):
             cur.execute(f"ALTER TABLE {tbl} ADD COLUMN {col} TEXT;")
             con.commit()
 
+    # ensure LinkedIn column exists in charts
+        cur.execute("PRAGMA table_info(charts)")
+        cols = [c[1] for c in cur.fetchall()]
+        if "developer_linkedin_url" not in cols:
+            print("⚙️ Adding missing column 'developer_linkedin_url' to charts...")
+            cur.execute("ALTER TABLE charts ADD COLUMN developer_linkedin_url TEXT;")
+            con.commit()
+
+
     con.close()
     print("✅ Database structure verified.")
 
