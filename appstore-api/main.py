@@ -769,17 +769,17 @@ def weekly_insights(
         counts[st] += 1
         rows.append({
             "status": st,
-            "rank": info["rank"],
+            "rank": info.get("rank"),
             "app_id": app_id,
-            "app_name": info["app_name"],
-            "developer_name": info["developer_name"] or "",
-            "bundle_id": info["bundle_id"] or "",
-            "category": info["category"],
-            "subcategory": info["subcategory"],
-            "app_store_url": info["app_store_url"] or "",
-            "app_url": info["app_url"] or "",
-            "icon_url": info["icon_url"] or "",
-            "developer_linkedin_url": info["developer_linkedin_url"] or "",
+            "app_name": info.get("app_name", ""),
+            "developer_name": info.get("developer_name", ""),
+            "bundle_id": info.get("bundle_id", ""),
+            "category": info.get("category", ""),
+            "subcategory": info.get("subcategory", ""),
+            "app_store_url": info.get("app_store_url", ""),
+            "app_url": info.get("app_url", ""),
+            "icon_url": info.get("icon_url", ""),
+            "developer_linkedin_url": info.get("developer_linkedin_url", ""),
         })
 
     # DROPPED
@@ -796,16 +796,16 @@ def weekly_insights(
             rows.append({
                 "status": "DROPPED",
                 "rank": None,
-                "app_id": r["app_id"],
-                "app_name": r["app_name"],
-                "developer_name": r["developer_name"] or "",
-                "bundle_id": r["bundle_id"] or "",
-                "category": r["category"],
-                "subcategory": r["subcategory"],
-                "app_store_url": r["app_store_url"] or "",
-                "app_url": r["app_url"] or "",
-                "icon_url": r["icon_url"] or "",
-                "developer_linkedin_url": r["developer_linkedin_url"] or "",
+                "app_id": rd.get("app_id", ""),
+                "app_name": rd.get("app_name", ""),
+                "developer_name": rd.get("developer_name", ""),
+                "bundle_id": rd.get("bundle_id", ""),
+                "category": rd.get("category", ""),
+                "subcategory": rd.get("subcategory", ""),
+                "app_store_url": rd.get("app_store_url", ""),
+                "app_url": rd.get("app_url", ""),
+                "icon_url": rd.get("icon_url", ""),
+                "developer_linkedin_url": rd.get("developer_linkedin_url", ""),
             })
         counts["DROPPED"] = len(dropped_ids)
 
