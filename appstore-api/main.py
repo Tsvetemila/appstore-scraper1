@@ -760,6 +760,7 @@ def weekly_insights(
 
     # NEW & RE-ENTRY
     for app_id, info in week_apps.items():
+        info = dict(info)  # ✅ безопасно копие на данните за приложението
         if app_id not in all_before_ids:
             st = "NEW"
         elif app_id in all_before_ids and app_id not in prev_ids:
@@ -793,6 +794,7 @@ def weekly_insights(
             GROUP BY app_id
         """, (*dropped_ids,))
         for r in cur.fetchall():
+            rd = dict(r)  # ✅ безопасно копие на реда
             rows.append({
                 "status": "DROPPED",
                 "rank": None,
