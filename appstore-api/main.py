@@ -15,7 +15,7 @@ def ensure_database_from_drive(force_if_newer: bool = False) -> Dict[str, Any]:
     - If DB is missing: download it.
     - If force_if_newer=True: check Drive modification time and download only if newer than local.
     """
-    local_path = "appstore-api/appstore-api/data/app_data.db"
+    local_path = os.path.join(os.path.dirname(__file__), "data", "app_data.db")
     creds_json = os.getenv("GOOGLE_CREDS_JSON")
     folder_id = os.getenv("GOOGLE_DRIVE_FOLDER_ID")
 
@@ -205,7 +205,7 @@ def populate_derived_tables(db_path: str):
 ensure_database_from_drive()  # on cold start only
 
 APP_DIR = Path(__file__).resolve().parent
-DB_PATH = APP_DIR / "appstore-api" / "data" / "app_data.db"
+DB_PATH = APP_DIR / "data" / "app_data.db"
 if not DB_PATH.exists():
     DB_PATH = APP_DIR / "data" / "app_data.db"
 if not DB_PATH.exists():
