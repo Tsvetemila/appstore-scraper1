@@ -8,7 +8,7 @@ on:
 jobs:
   run-scraper:
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 75
     env:
       BING_API_KEY: ${{ secrets.BING_API_KEY }}
 
