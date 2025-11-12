@@ -50,7 +50,7 @@ def ensure_schema(conn):
         cur.execute("ALTER TABLE charts ADD COLUMN genre_id TEXT;")
     cur.execute("PRAGMA table_info(charts)")
     cols = [r[1] for r in cur.fetchall()]
-    for col in ["app_store_url", "app_url", "icon_url", "developer_linkedin_url"]:
+    for col in ["app_store_url", "app_url", "icon_url"]:
         if col not in cols:
             print(f"[DB] Adding missing column: {col}")
             cur.execute(f"ALTER TABLE charts ADD COLUMN {col} TEXT;")
@@ -62,8 +62,8 @@ def insert_rows(conn, rows):
             snapshot_date,country,category,subcategory,chart_type,rank,
             app_id,bundle_id,app_name,developer_name,price,currency,
             rating,ratings_count,genre_id,
-            app_store_url,app_url,icon_url,developer_linkedin_url,raw
-        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            app_store_url,app_url,icon_url,raw
+        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         """, rows)
     conn.commit()
 
@@ -100,75 +100,6 @@ def fetch_genre_top50(country, genre_id, slug):
     # fallback HTML
     return parse_html_apps(country, genre_id, slug),"html"
 
-_LINKEDIN_CACHE_PATH = os.path.join(os.path.dirname(__file__), "..", "appstore-api", "data", "linkedin_cache.json")
-try:
-    if os.path.exists(_LINKEDIN_CACHE_PATH):
-        with open(_LINKEDIN_CACHE_PATH, "r", encoding="utf-8") as f:
-            _LINKEDIN_CACHE = json.load(f)
-    else:
-        _LINKEDIN_CACHE = {}
-except Exception:
-    _LINKEDIN_CACHE = {}
-
-def find_linkedin_profile(developer_name: str) -> str:
-    """
-    Smart LinkedIn lookup: 
-    1. Check JSON cache 
-    2. Check DB if available 
-    3. Use Bing API only if needed
-    """
-    if not developer_name:
-        return ""
-    if developer_name in _LINKEDIN_CACHE and _LINKEDIN_CACHE[developer_name]:
-        return _LINKEDIN_CACHE[developer_name]
-
-    try:
-        con = sqlite3.connect(DB_PATH)
-        cur = con.cursor()
-        cur.execute("SELECT developer_linkedin_url FROM charts WHERE developer_name=? AND developer_linkedin_url != '' LIMIT 1", (developer_name,))
-        row = cur.fetchone()
-        con.close()
-        if row and row[0]:
-            _LINKEDIN_CACHE[developer_name] = row[0]
-            return row[0]
-    except Exception:
-        pass
-
-    BING_KEY = os.getenv("BING_API_KEY")
-    if not BING_KEY:
-        return ""
-
-    try:
-        query = f'"{developer_name}" site:linkedin.com/company OR site:linkedin.com/in'
-        headers = {"Ocp-Apim-Subscription-Key": BING_KEY}
-        url = f"https://api.bing.microsoft.com/v7.0/search?q={requests.utils.quote(query)}"
-        r = requests.get(url, headers=headers, timeout=10)
-        if r.status_code == 200:
-            data = r.json()
-            value = data.get("webPages", {}).get("value", [])
-            if value:
-                link = value[0].get("url", "")
-                _LINKEDIN_CACHE[developer_name] = link
-                time.sleep(0.5)
-                return link
-
-            # 🕒 Минимална пауза между заявките (предпазва безплатния Bing tier)
-            time.sleep(1)
-
-    except Exception as e:
-        print(f"[WARN] Bing lookup failed for {developer_name}: {e}")
-
-    _LINKEDIN_CACHE[developer_name] = ""
-    return ""
-
-def save_linkedin_cache():
-    try:
-        with open(_LINKEDIN_CACHE_PATH, "w", encoding="utf-8") as f:
-            json.dump(_LINKEDIN_CACHE, f, ensure_ascii=False, indent=2)
-    except Exception as e:
-        print(f"[WARN] Could not save LinkedIn cache: {e}")
-
-
 
 
 def enrich_with_lookup(country, ids):
@@ -190,7 +121,6 @@ def enrich_with_lookup(country, ids):
              "app_store_url": r.get("trackViewUrl"),
              "app_url": r.get("sellerUrl"),
              "icon_url": r.get("artworkUrl100"),
-             "developer_linkedin_url": find_linkedin_profile(r.get("artistName", "")),
              "raw": json.dumps(r, ensure_ascii=False)
             }
     return out
@@ -218,7 +148,6 @@ def scrape_apps():
                     lookup.get(it["id"], {}).get("app_store_url"),
                     lookup.get(it["id"], {}).get("app_url"),
                     lookup.get(it["id"], {}).get("icon_url"),
-                    lookup.get(it["id"], {}).get("developer_linkedin_url"),
                     lookup.get(it["id"], {}).get("raw"))
                    for it in items]
             insert_rows(conn,rows)
@@ -227,8 +156,6 @@ def scrape_apps():
     
     print(f"[OK] APPS inserted {total} rows {snap}")
 
-    # ✅ Запазваме кеша веднага след успешен скрейп
-    save_linkedin_cache()
 
     # ✅ Затваряме базата безопасно
     if conn:
