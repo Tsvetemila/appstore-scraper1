@@ -8,10 +8,8 @@ on:
 jobs:
   run-scraper:
     runs-on: ubuntu-latest
-    timeout-minutes: 240
-    env:
-      BING_API_KEY: ${{ secrets.BING_API_KEY }}
-
+    timeout-minutes: 30
+    
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4

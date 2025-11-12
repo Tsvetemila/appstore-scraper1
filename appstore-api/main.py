@@ -152,13 +152,6 @@ def ensure_tables_exist(db_path: str):
             cur.execute(f"ALTER TABLE {tbl} ADD COLUMN {col} TEXT;")
             con.commit()
 
-    # ensure LinkedIn column exists in charts
-        cur.execute("PRAGMA table_info(charts)")
-        cols = [c[1] for c in cur.fetchall()]
-        if "developer_linkedin_url" not in cols:
-            print("⚙️ Adding missing column 'developer_linkedin_url' to charts...")
-            cur.execute("ALTER TABLE charts ADD COLUMN developer_linkedin_url TEXT;")
-            con.commit()
 
 
     con.close()
@@ -731,7 +724,6 @@ def weekly_insights(
         app_store_url,
         app_url,
         icon_url,
-        developer_linkedin_url
     FROM charts
     WHERE {where_base} AND snapshot_date IN ({placeholders_week})
     """, (*params_base, *week_dates))
@@ -780,7 +772,6 @@ def weekly_insights(
             "app_store_url": info.get("app_store_url", ""),
             "app_url": info.get("app_url", ""),
             "icon_url": info.get("icon_url", ""),
-            "developer_linkedin_url": info.get("developer_linkedin_url", ""),
         })
 
     # DROPPED
@@ -789,7 +780,7 @@ def weekly_insights(
         placeholders_drop = ",".join(["?"] * len(dropped_ids))
         cur.execute(f"""
             SELECT app_id, app_name, developer_name, category, subcategory,
-                   app_store_url, app_url, icon_url, developer_linkedin_url
+                   app_store_url, app_url, icon_url
             FROM charts WHERE app_id IN ({placeholders_drop})
             GROUP BY app_id
         """, (*dropped_ids,))
@@ -807,7 +798,6 @@ def weekly_insights(
                 "app_store_url": rd.get("app_store_url", ""),
                 "app_url": rd.get("app_url", ""),
                 "icon_url": rd.get("icon_url", ""),
-                "developer_linkedin_url": rd.get("developer_linkedin_url", ""),
             })
         counts["DROPPED"] = len(dropped_ids)
 
