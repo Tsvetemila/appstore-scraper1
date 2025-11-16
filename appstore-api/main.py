@@ -403,7 +403,7 @@ def compare_weekly_full(
         results.append({
             "app_id": app_id,
             "app_name": app_name,
-            "developer": dev,
+            "developer_name": dev,
             "category": cat,
             "subcategory": subcat,
             "current_rank": rank_now,
@@ -780,7 +780,7 @@ def weekly_insights(
         placeholders_drop = ",".join(["?"] * len(dropped_ids))
         cur.execute(f"""
             SELECT app_id, app_name, developer_name, category, subcategory,
-                   app_store_url, app_url, icon_url
+                   bundle_id,app_store_url, app_url, icon_url
             FROM charts WHERE app_id IN ({placeholders_drop})
             GROUP BY app_id
         """, (*dropped_ids,))
@@ -829,7 +829,7 @@ async def add_cors_headers(request, call_next):
     try:
         response = await call_next(request)
     except Exception as e:
-        response = Response(content=str(e), status_code=500)
+        response = JSONResponse(status_code=500, content={"error": str(e)})
     response.headers["Access-Control-Allow-Origin"] = "*"
     response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
     response.headers["Access-Control-Allow-Headers"] = "*"
