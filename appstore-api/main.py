@@ -723,7 +723,7 @@ def weekly_insights(
         rank,
         app_store_url,
         app_url,
-        icon_url,
+        icon_url
     FROM charts
     WHERE {where_base} AND snapshot_date IN ({placeholders_week})
     """, (*params_base, *week_dates))

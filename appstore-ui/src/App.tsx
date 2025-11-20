@@ -92,7 +92,6 @@ type WeeklyRow = {
   app_store_url?: string;
   app_url?: string;
   icon_url?: string;
-  developer_linkedin_url?: string;
 };
 
 type WeeklyPayload = {
@@ -210,7 +209,6 @@ export default function App() {
     "subcategory",
     "app_store_url",
     "app_url",
-    "developer_linkedin_url",
     "icon_url",
     "country",
   ];
@@ -228,7 +226,6 @@ export default function App() {
       r.subcategory || "",
       r.app_store_url || "",
       r.app_url || "",
-      r.developer_linkedin_url || "",
       r.icon_url || "",
       r.country || country,
     ]
@@ -527,7 +524,6 @@ export default function App() {
                       ["developer_name", "Developer"],
                       ["app_store_url", "App Store"],
                       ["app_url", "Website"],
-                      ["developer_linkedin_url", "LinkedIn"],
                       ["icon_url", "Icon"],
                       ["bundle_id", "Bundle ID"],
                       ["country", "Country"],
@@ -634,15 +630,6 @@ export default function App() {
   {r.app_url ? (
     <a href={r.app_url} target="_blank" rel="noopener noreferrer">
       Website
-    </a>
-  ) : (
-    "—"
-  )}
-</td>
-<td style={{ padding: 10 }}>
-  {r.developer_linkedin_url ? (
-    <a href={r.developer_linkedin_url} target="_blank" rel="noopener noreferrer">
-      LinkedIn
     </a>
   ) : (
     "—"
