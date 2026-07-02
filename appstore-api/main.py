@@ -28,8 +28,20 @@ def ensure_database_from_drive(force_if_newer: bool = False) -> Dict[str, Any]:
 
     local_exists = os.path.exists(local_path)
 
-    # If not forcing and local exists — nothing to do
-    if local_exists and not force_if_newer:
+    # A local file only counts as "present" if it actually has chart rows.
+    # A freshly-created empty DB (e.g. after a failed download) must never
+    # block a real download just because its file mtime looks "newer".
+    local_has_data = False
+    if local_exists:
+        try:
+            chk = sqlite3.connect(local_path)
+            local_has_data = chk.execute("SELECT COUNT(*) FROM charts").fetchone()[0] > 0
+            chk.close()
+        except Exception:
+            local_has_data = False  # missing table / corrupt file -> treat as no data
+
+    # If not forcing and local already has data — nothing to do
+    if local_has_data and not force_if_newer:
         info["reason"] = "Local DB present, no force."
         print("✅ Database already exists locally.")
         return info
@@ -50,7 +62,7 @@ def ensure_database_from_drive(force_if_newer: bool = False) -> Dict[str, Any]:
         meta = files[0]
         remote_mtime = datetime.fromisoformat(meta["modifiedTime"].replace("Z", "+00:00"))
 
-        if local_exists and force_if_newer:
+        if local_has_data and force_if_newer:
             local_mtime = datetime.fromtimestamp(os.path.getmtime(local_path), tz=timezone.utc)
             if remote_mtime <= local_mtime:
                 info["reason"] = "Remote not newer."
@@ -60,19 +72,33 @@ def ensure_database_from_drive(force_if_newer: bool = False) -> Dict[str, Any]:
         print("⬇️ Downloading database from Google Drive...")
         request = drive.files().get_media(fileId=meta["id"])
         os.makedirs(os.path.dirname(local_path), exist_ok=True)
-        with io.FileIO(local_path, "wb") as f:
-            downloader = MediaIoBaseDownload(f, request)
-            done = False
-            while not done:
-                status, done = downloader.next_chunk()
-                if status:
-                    print(f"⬇️ Download progress: {int(status.progress() * 100)}%")
-        info["downloaded"] = True
-        info["reason"] = "Downloaded"
-        print(f"✅ Database downloaded to {local_path}")
+        tmp_path = local_path + ".tmp"
+        try:
+            with io.FileIO(tmp_path, "wb") as f:
+                downloader = MediaIoBaseDownload(f, request)
+                done = False
+                while not done:
+                    status, done = downloader.next_chunk()
+                    if status:
+                        print(f"⬇️ Download progress: {int(status.progress() * 100)}%")
+
+            # Validate before replacing a working local DB with a possibly partial one
+            check_con = sqlite3.connect(tmp_path)
+            try:
+                check_con.execute("PRAGMA integrity_check;").fetchone()
+            finally:
+                check_con.close()
+
+            os.replace(tmp_path, local_path)
+            info["downloaded"] = True
+            info["reason"] = "Downloaded"
+            print(f"✅ Database downloaded to {local_path}")
+        finally:
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
     except Exception as e:
         info["reason"] = f"Error: {e}"
-        print(f"❌ Error downloading DB: {e}")
+        print(f"❌ Error downloading DB: {e}. Keeping existing local database if present.")
 
     return info
 
